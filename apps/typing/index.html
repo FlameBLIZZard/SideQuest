@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keyrace · Sidequest</title>
+<link rel="stylesheet" href="../../shared/sq.css">
+<style>
+  :root { --accent: #2dd4bf; --accent-ink: #03171a; --bad: #f87171; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 24px 16px 40px; display: grid; gap: 18px; }
+  .modes { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  .modes .sep { width: 1px; background: var(--line); margin: 0 6px; }
+  .live { display: flex; gap: 28px; justify-content: center; font: 600 15px var(--mono); color: var(--mute); min-height: 24px; }
+  .live b { color: var(--accent); font-size: 22px; }
+  .board { position: relative; font: 25px/1.6 var(--mono); height: calc(25px * 1.6 * 3 + 8px); overflow: hidden; color: var(--mute); cursor: text; outline: none; padding: 4px 2px; font-variant-ligatures: none; }
+  .board.code { font-size: 18px; height: calc(18px * 1.6 * 9 + 8px); white-space: pre; }
+  .board .t { white-space: pre-wrap; word-break: break-word; }
+  .board.code .t { white-space: pre; }
+  .board span.ok { color: var(--ink); }
+  .board span.bad { color: var(--bad); text-decoration: underline; }
+  .board span.bad.sp { background: color-mix(in srgb, var(--bad) 35%, transparent); }
+  .board span.cur { box-shadow: -2px 0 0 var(--accent); animation: caret 1s steps(1) infinite; }
+  .board span.ghost { box-shadow: -2px 0 0 #a78bfa; }
+  .board span.nl::after { content: '↵'; opacity: .35; }
+  @keyframes caret { 50% { box-shadow: -2px 0 0 transparent; } }
+  .board.idle span.cur { animation: caret 1s steps(1) infinite; }
+  .blur { position: absolute; inset: 0; display: grid; place-items: center; backdrop-filter: blur(4px); font: 600 15px var(--font); color: var(--ink); }
+  .result { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+  .stat span { color: var(--mute); font-size: 12px; font-weight: 600; }
+  .stat b { display: block; font: 700 32px var(--mono); color: var(--accent); }
+  canvas.chart { width: 100%; height: 180px; display: block; }
+  .hint { text-align: center; color: var(--mute); font-size: 13px; }
+  .pbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+  .pbs div { font: 13px var(--mono); color: var(--mute); }
+  .pbs b { color: var(--ink); }
+</style>
+</head>
+<body>
+<header class="sq-top">
+  <a class="home" href="../../index.html">← Sidequest</a>
+  <h1><span class="dot"></span>Keyrace</h1>
+  <span class="mute">typing speed test with code mode</span>
+  <div class="spacer"></div>
+  <div class="actions"><label class="check"><input type="checkbox" id="ghost"> Race my best (ghost)</label></div>
+</header>
+<div class="wrap">
+  <div class="modes" id="modes"></div>
+  <div class="live" id="live"></div>
+  <section class="panel" style="position:relative">
+    <div class="board" id="board" tabindex="0"><div class="t" id="text"></div></div>
+    <div class="blur" id="blur" hidden>Click here or press any key to focus</div>
+  </section>
+  <div class="hint"><kbd>Tab</kbd> + <kbd>Enter</kbd> restart · <kbd>Esc</kbd> new text · <kbd>Ctrl</kbd>+<kbd>Backspace</kbd> delete word</div>
+  <section id="resultBox" hidden class="stack">
+    <div class="result" id="result"></div>
+    <div class="panel"><h2>Speed over this run</h2><canvas class="chart" id="runChart"></canvas></div>
+  </section>
+  <section class="panel">
+    <h2>Your history</h2>
+    <canvas class="chart" id="histChart"></canvas>
+    <div class="pbs" id="pbs" style="margin-top:12px"></div>
+    <div class="row" style="margin-top:10px"><button id="clearHist">Clear history</button></div>
+  </section>
+</div>
+
+<script src="../../shared/sq.js"></script>
+<script>
+const { $, el } = SQ;
+const WORDS = 'the be to of and a in that have it for not on with he as you do at this but his by from they we say her she or an will my one all would there their what so up out if about who get which go me when make can like time no just him know take people into year your good some could them see other than then now look only come its over think also back after use two how our work first well way even new want because any these give day most us is was are been has had were said each tell does set three air play small end put home read hand port large spell add land here must big high such follow act why ask men change went light kind off need house picture try again animal point mother world near build self earth father head stand own page should country found answer school grow study still learn plant cover food sun four between state keep eye never last let thought city tree cross farm hard start might story saw far sea draw left late run while press close night real life few north open seem together next white children begin got walk example ease paper group always music those both mark often letter until mile river car feet care second book carry took science eat room friend began idea fish mountain stop once base hear horse cut sure watch color face wood main enough plain girl usual young ready above ever red list though feel talk bird soon body dog family direct pose leave song measure door product black short numeral class wind question happen complete ship area half rock order fire south problem piece told knew pass since top whole king space heard best hour better true during hundred five remember step early hold west ground interest reach fast verb sing listen six table travel less morning ten simple several vowel toward war lay against pattern slow center love person money serve appear road map rain rule govern pull cold notice voice unit power town fine certain fly fall lead cry dark machine note wait plan figure star box noun field rest correct able pound done beauty drive stood contain front teach week final gave green oh quick develop ocean warm free minute strong special mind behind clear tail produce fact street inch multiply nothing course stay wheel full force blue object decide surface deep moon island foot system busy test record boat common gold possible plane stead dry wonder laugh thousand ago ran check game shape equate miss brought heat snow tire bring yes distant fill east paint language among'.split(' ');
+const QUOTES = [
+  'The best time to plant a tree was twenty years ago. The second best time is now.',
+  'A ship in harbor is safe, but that is not what ships are built for.',
+  'Fall seven times and stand up eight.',
+  'You miss every shot you never take, so take the weird ones too.',
+  'Small daily improvements are the key to staggering long-term results.',
+  'The expert in anything was once a beginner who refused to quit.',
+  'Simplicity is the soul of efficiency, and also of good tools.',
+  'If you are not embarrassed by the first version, you shipped too late.',
+  'Make it work, make it right, then make it fast.',
+  'Every great developer you know got there by solving problems they were unqualified to solve until they actually did it.',
+  'Side quests are where the best loot is hidden.',
+  'Measure twice, cut once, and keep a backup of the plank.',
+];
+const CODE = [
+  `function debounce(fn, ms) {\n  let t;\n  return (...args) => {\n    clearTimeout(t);\n    t = setTimeout(() => fn(...args), ms);\n  };\n}`,
+  `def fizzbuzz(n):\n    for i in range(1, n + 1):\n        out = ""\n        if i % 3 == 0: out += "Fizz"\n        if i % 5 == 0: out += "Buzz"\n        print(out or i)`,
+  `const sum = (xs) => xs.reduce((a, b) => a + b, 0);\nconst avg = (xs) => sum(xs) / xs.length;\nconsole.log(avg([3, 5, 8, 13]));`,
+  `#include <stdio.h>\n\nint main(void) {\n  for (int i = 0; i < 3; i++) {\n    printf("side quest %d\\n", i);\n  }\n  return 0;\n}`,
+  `SELECT name, COUNT(*) AS plays\nFROM tracks\nWHERE genre = 'lofi'\nGROUP BY name\nORDER BY plays DESC\nLIMIT 10;`,
+  `fn main() {\n    let v: Vec<i32> = (1..=5).map(|x| x * x).collect();\n    println!("{:?}", v);\n}`,
+  `.card {\n  display: grid;\n  gap: 12px;\n  border-radius: 10px;\n  background: var(--panel);\n}`,
+  `async function getJson(url) {\n  const res = await fetch(url);\n  if (!res.ok) throw new Error(res.status);\n  return res.json();\n}`,
+];
+const S = Object.assign({ mode: 'time', amount: 30, punct: false, nums: false, ghost: false }, SQ.store.get('keyrace', {}));
+let hist = SQ.store.get('keyrace-hist', []);
+let target = '', typed = '', spans = [], startAt = 0, timer = null, keystrokes = 0, correctKeys = 0, samples = [], done = false, ghostIdx = -1;
+
+const MODES = [
+  { mode: 'time', amount: 15, label: '15s' }, { mode: 'time', amount: 30, label: '30s' }, { mode: 'time', amount: 60, label: '60s' }, 'sep',
+  { mode: 'words', amount: 25, label: '25 words' }, { mode: 'words', amount: 50, label: '50 words' }, 'sep',
+  { mode: 'quote', amount: 0, label: 'Quote' }, { mode: 'code', amount: 0, label: 'Code' }, 'sep',
+  { toggle: 'punct', label: 'punctuation' }, { toggle: 'nums', label: 'numbers' },
+];
+const modeKey = () => S.mode === 'time' || S.mode === 'words' ? `${S.mode}-${S.amount}` : S.mode;
+
+function makeText() {
+  if (S.mode === 'quote') return SQ.pick(QUOTES);
+  if (S.mode === 'code') return SQ.pick(CODE);
+  const n = S.mode === 'words' ? S.amount : Math.max(60, S.amount * 4);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    let w = SQ.pick(WORDS);
+    if (S.nums && Math.random() < .12) w = String(Math.floor(Math.random() * 1000));
+    if (S.punct) { if (Math.random() < .1) w = w[0].toUpperCase() + w.slice(1); const r = Math.random(); if (r < .08) w += ','; else if (r < .13) w += '.'; else if (r < .15) w += '?'; else if (r < .17) w = `"${w}"`; }
+    out.push(w);
+  }
+  return out.join(' ');
+}
+function reset(newText = true) {
+  clearInterval(timer); timer = null;
+  if (newText) target = makeText();
+  typed = ''; startAt = 0; keystrokes = 0; correctKeys = 0; samples = []; done = false; ghostIdx = -1;
+  const t = $('#text'); t.innerHTML = ''; spans = [];
+  $('#board').classList.toggle('code', S.mode === 'code');
+  for (const ch of target) { const s = ch === '\n' ? el('span', { class: 'nl' }) : el('span', {}, ch); spans.push(s); t.append(s); if (ch === '\n') t.append('\n'); }
+  const end = el('span', {}, ' '); spans.push(end); t.append(end);
+  $('#resultBox').hidden = true; $('#board').scrollTop = 0;
+  paint(); live(); $('#board').focus();
+}
+function paint(from = 0) {
+  for (let i = from; i < spans.length; i++) {
+    const s = spans[i], ch = target[i];
+    let cls = ch === '\n' ? 'nl' : '';
+    if (i < typed.length) cls += typed[i] === ch ? ' ok' : ' bad' + (ch === ' ' ? ' sp' : '');
+    if (i === typed.length) cls += ' cur';
+    if (i === ghostIdx) cls += ' ghost';
+    s.className = cls;
+  }
+  const cur = spans[typed.length];
+  if (cur) { const board = $('#board'), lh = parseFloat(getComputedStyle(board).lineHeight); const top = cur.offsetTop - board.offsetTop; board.scrollTop = Math.max(0, top - lh); }
+}
+function elapsed() { return startAt ? (performance.now() - startAt) / 1000 : 0; }
+function correctChars() { let n = 0; for (let i = 0; i < typed.length; i++) if (typed[i] === target[i]) n++; return n; }
+function wpmNow() { const m = elapsed() / 60; return m > 0 ? correctChars() / 5 / m : 0; }
+function live() {
+  const box = $('#live');
+  if (!startAt) { box.innerHTML = S.mode === 'time' ? `<span><b>${S.amount}</b> s</span>` : `<span>start typing</span>`; return; }
+  const left = S.mode === 'time' ? `<span><b>${Math.max(0, Math.ceil(S.amount - elapsed()))}</b> s</span>` : `<span><b>${typed.split(/\s+/).filter(Boolean).length}</b>/${target.split(/\s+/).length} words</span>`;
+  box.innerHTML = `${left}<span><b>${Math.round(wpmNow())}</b> wpm</span><span><b>${keystrokes ? Math.round(correctKeys / keystrokes * 100) : 100}</b>% acc</span>`;
+}
+function tick() {
+  const t = elapsed();
+  while (samples.length < Math.floor(t)) samples.push(Math.round(wpmNow()));
+  if (S.ghost) {
+    const pb = (bests()[modeKey()] || {}).wpm;
+    if (pb) { const prev = ghostIdx; ghostIdx = Math.min(target.length, Math.floor(pb * 5 * t / 60)); if (prev !== ghostIdx) paint(Math.max(0, Math.min(prev, ghostIdx) - 1)); }
+  }
+  live();
+  if (S.mode === 'time' && t >= S.amount) finish();
+}
+function start() { startAt = performance.now(); timer = setInterval(tick, 100); }
+function finish() {
+  if (done) return; done = true; clearInterval(timer);
+  const t = Math.min(elapsed(), S.mode === 'time' ? S.amount : Infinity), m = t / 60;
+  const wpm = correctChars() / 5 / m, raw = typed.length / 5 / m, acc = keystrokes ? correctKeys / keystrokes * 100 : 0;
+  const mean = samples.reduce((a, b) => a + b, 0) / (samples.length || 1), sd = Math.sqrt(samples.reduce((a, b) => a + (b - mean) ** 2, 0) / (samples.length || 1));
+  const consistency = mean ? Math.max(0, 100 - sd / mean * 100) : 0;
+  const prevBest = (bests()[modeKey()] || {}).wpm || 0;
+  hist.push({ at: Date.now(), mode: modeKey(), wpm: Math.round(wpm), raw: Math.round(raw), acc: Math.round(acc) });
+  if (hist.length > 300) hist = hist.slice(-300);
+  SQ.store.set('keyrace-hist', hist);
+  const stat = (label, val) => el('div', { class: 'stat' }, el('span', {}, label), el('b', {}, val));
+  $('#result').innerHTML = '';
+  $('#result').append(stat('wpm', Math.round(wpm)), stat('accuracy', Math.round(acc) + '%'), stat('raw', Math.round(raw)), stat('consistency', samples.length > 1 ? Math.round(consistency) + '%' : '–'), stat('time', t.toFixed(1) + 's'));
+  $('#resultBox').hidden = false;
+  if (wpm > prevBest && prevBest) SQ.toast(`New personal best for ${modeKey()}! +${Math.round(wpm - prevBest)} wpm`);
+  chart($('#runChart'), samples.map((v, i) => [i + 1, v]), 's');
+  renderHistory(); live();
+}
+function bests() { const b = {}; for (const h of hist) if (!b[h.mode] || h.wpm > b[h.mode].wpm) b[h.mode] = h; return b; }
+
+// ---------- typing ----------
+$('#board').addEventListener('keydown', (e) => {
+  if (e.key === 'Tab') { e.preventDefault(); tabArmed = true; return; }
+  if (e.key === 'Enter' && tabArmed) { e.preventDefault(); tabArmed = false; reset(false); return; }
+  tabArmed = false;
+  if (e.key === 'Escape') { e.preventDefault(); reset(true); return; }
+  if (done || e.ctrlKey && e.key !== 'Backspace' || e.metaKey || e.altKey) return;
+  const before = typed.length;
+  if (e.key === 'Backspace') {
+    e.preventDefault();
+    if (e.ctrlKey) typed = typed.replace(/\S*\s*$/, '');
+    else typed = typed.slice(0, -1);
+    paint(Math.max(0, typed.length - 1)); live(); return;
+  }
+  let ch = e.key === 'Enter' ? '\n' : e.key.length === 1 ? e.key : null;
+  if (ch === null) return;
+  e.preventDefault();
+  if (!startAt) start();
+  if (typed.length >= target.length) return;
+  keystrokes++; if (ch === target[typed.length]) correctKeys++;
+  typed += ch;
+  if (ch === '\n' && S.mode === 'code') { while (target[typed.length] === ' ') typed += ' '; } // auto-indent
+  paint(Math.max(0, before - 1)); live();
+  if (S.mode !== 'time' && typed.length >= target.length) finish();
+  if (S.mode === 'time' && typed.length >= target.length - 20) { // extend the word stream
+    const more = ' ' + makeText(); target += more;
+    const t = $('#text'), end = spans.pop(); end.remove();
+    for (const c of more) { const s = el('span', {}, c); spans.push(s); t.append(s); }
+    const e2 = el('span', {}, ' '); spans.push(e2); t.append(e2); paint(typed.length - 1);
+  }
+});
+let tabArmed = false;
+$('#board').addEventListener('focus', () => ($('#blur').hidden = true));
+$('#board').addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== $('#board')) $('#blur').hidden = false; }, 100));
+$('#blur').onclick = () => $('#board').focus();
+addEventListener('keydown', (e) => { if (document.activeElement !== $('#board') && !SQ.isTyping(e) && e.key.length === 1 && !e.ctrlKey && !e.metaKey) { $('#board').focus(); } });
+
+// ---------- charts ----------
+function chart(cv, pts, unit) {
+  const dpr = devicePixelRatio || 1, w = cv.width = cv.clientWidth * dpr, h = cv.height = 180 * dpr, c = cv.getContext('2d');
+  const css = getComputedStyle(document.body), accent = css.getPropertyValue('--accent').trim(), mute = css.getPropertyValue('--mute').trim(), line = css.getPropertyValue('--line').trim();
+  c.clearRect(0, 0, w, h);
+  if (pts.length < 2) { c.fillStyle = mute; c.font = `${13 * dpr}px system-ui`; c.fillText('Finish a few runs to see a graph.', 12 * dpr, h / 2); return; }
+  const pad = 30 * dpr, maxY = Math.max(...pts.map((p) => p[1])) * 1.15 || 10;
+  c.strokeStyle = line; c.fillStyle = mute; c.font = `${11 * dpr}px system-ui`; c.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) { const y = h - pad / 2 - (h - pad) * i / 4; c.beginPath(); c.moveTo(pad, y); c.lineTo(w - 8 * dpr, y); c.stroke(); c.fillText(Math.round(maxY * i / 4), 4 * dpr, y + 4 * dpr); }
+  const X = (i) => pad + (w - pad - 12 * dpr) * i / (pts.length - 1), Y = (v) => h - pad / 2 - (h - pad) * v / maxY;
+  c.strokeStyle = accent; c.lineWidth = 2.5 * dpr; c.lineJoin = 'round'; c.beginPath();
+  pts.forEach((p, i) => (i ? c.lineTo(X(i), Y(p[1])) : c.moveTo(X(i), Y(p[1])))); c.stroke();
+  c.lineTo(X(pts.length - 1), h - pad / 2); c.lineTo(X(0), h - pad / 2); c.closePath();
+  c.fillStyle = accent + '22'; c.fill();
+  c.fillStyle = accent; pts.forEach((p, i) => { c.beginPath(); c.arc(X(i), Y(p[1]), 3 * dpr, 0, 7); c.fill(); });
+}
+function renderHistory() {
+  chart($('#histChart'), hist.slice(-50).map((h, i) => [i, h.wpm]));
+  const b = bests(), box = $('#pbs'); box.innerHTML = '';
+  const keys = Object.keys(b);
+  if (!keys.length) box.append(el('div', {}, 'No runs yet.'));
+  keys.sort().forEach((k) => box.append(el('div', {}, `${k}: `, el('b', {}, b[k].wpm + ' wpm'), ` · ${b[k].acc}%`)));
+}
+$('#clearHist').onclick = () => { if (confirm('Clear all typing history?')) { hist = []; SQ.store.set('keyrace-hist', hist); renderHistory(); } };
+
+function buildModes() {
+  const box = $('#modes'); box.innerHTML = '';
+  MODES.forEach((m) => {
+    if (m === 'sep') return box.append(el('span', { class: 'sep' }));
+    const on = m.toggle ? S[m.toggle] : S.mode === m.mode && (m.amount === 0 || S.amount === m.amount);
+    box.append(el('button', { class: on ? 'on' : '', onclick: () => { if (m.toggle) S[m.toggle] = !S[m.toggle]; else { S.mode = m.mode; if (m.amount) S.amount = m.amount; } SQ.store.set('keyrace', S); buildModes(); reset(true); } }, m.label));
+  });
+}
+$('#ghost').checked = S.ghost; $('#ghost').onchange = (e) => { S.ghost = e.target.checked; SQ.store.set('keyrace', S); reset(false); };
+addEventListener('resize', () => renderHistory());
+buildModes(); reset(true); renderHistory();
+</script>
+</body>
+</html>

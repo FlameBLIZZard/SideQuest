@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loft · Sidequest</title>
+<link rel="stylesheet" href="../../shared/sq.css">
+<style>
+  :root { --accent: #f4b860; --accent-ink: #1d1406; }
+  .seq { display: grid; grid-template-columns: 90px repeat(16, minmax(0, 1fr)); gap: 5px; align-items: center; width: 100%; }
+  .seq .name { font-size: 12px; font-weight: 700; color: var(--mute); display: flex; justify-content: space-between; align-items: center; gap: 4px; }
+  .seq .name button { padding: 1px 6px; font-size: 10px; }
+  .step { aspect-ratio: 1; border-radius: 6px; padding: 0; background: var(--panel-2); border: 1px solid var(--line); }
+  .step:nth-child(4n + 2) { margin-left: 0; }
+  .step.beat { background: color-mix(in srgb, var(--panel-2) 80%, var(--ink) 8%); }
+  .step.on { background: var(--accent); border-color: transparent; }
+  .step.now { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .chords { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .chord { display: grid; gap: 4px; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); }
+  .chord.now { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .chord b { font-size: 18px; }
+  .main { display: grid; gap: 14px; align-content: start; }
+  .transport { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .play { width: 56px; height: 56px; border-radius: 50%; font-size: 20px; }
+  canvas#scope { width: 100%; height: 70px; display: block; }
+</style>
+</head>
+<body>
+<header class="sq-top">
+  <a class="home" href="../../index.html">← Sidequest</a>
+  <h1><span class="dot"></span>Loft</h1>
+  <span class="mute">lo-fi beat maker</span>
+  <div class="spacer"></div>
+  <div class="actions">
+    <select id="preset" title="Presets"></select>
+    <button id="random" data-smoke>Randomize</button>
+    <button id="clear" data-smoke>Clear drums</button>
+    <select id="loops" title="Export length"><option value="1">4 bars</option><option value="2" selected>8 bars</option><option value="4">16 bars</option></select>
+    <button id="export" class="primary">Export WAV</button>
+  </div>
+</header>
+
+<main class="sq-app">
+  <aside class="sq-side">
+    <section class="panel stack">
+      <h2>Groove</h2>
+      <label class="field"><span>Tempo <b id="bpmL"></b></span><input type="range" id="bpm" min="60" max="110"></label>
+      <label class="field"><span>Swing <b id="swingL"></b></span><input type="range" id="swing" min="0" max="60"></label>
+      <label class="field"><span>Key</span><select id="key"></select></label>
+    </section>
+    <section class="panel stack">
+      <h2>Texture</h2>
+      <label class="field"><span>Vinyl crackle <b id="crackleL"></b></span><input type="range" id="crackle" min="0" max="100"></label>
+      <label class="field"><span>Tape wobble <b id="wobbleL"></b></span><input type="range" id="wobble" min="0" max="100"></label>
+      <label class="field"><span>Warmth (low-pass) <b id="warmL"></b></span><input type="range" id="warm" min="0" max="100"></label>
+      <label class="field"><span>Room <b id="roomL"></b></span><input type="range" id="room" min="0" max="100"></label>
+      <label class="check"><input type="checkbox" id="bass"> Bass line</label>
+      <label class="check"><input type="checkbox" id="sparkle"> Sparkle melody</label>
+    </section>
+  </aside>
+
+  <div class="main">
+    <section class="panel">
+      <div class="transport">
+        <button class="play primary" id="play" title="Play / stop (Space)">▶</button>
+        <div>
+          <div style="font-weight:700;font-size:16px" id="status">Press play</div>
+          <div class="mute">Click steps to toggle. <kbd>Space</kbd> plays.</div>
+        </div>
+        <div style="flex:1;min-width:160px"><canvas id="scope"></canvas></div>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Drums</h2>
+      <div class="seq" id="seq"></div>
+    </section>
+    <section class="panel">
+      <h2>Chords (one per bar)</h2>
+      <div class="chords" id="chords"></div>
+    </section>
+  </div>
+</main>
+
+<script src="../../shared/sq.js"></script>
+<script>
+const { $, el } = SQ;
+const DRUMS = ['kick', 'snare', 'hat', 'open', 'clap', 'rim'];
+const NAMES = { kick: 'Kick', snare: 'Snare', hat: 'Hat', open: 'Open hat', clap: 'Clap', rim: 'Rim' };
+const KEYS = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+// Diatonic chords of a major key: [semitone offset of root, intervals, roman label suffix]
+const DEGREES = {
+  I: [0, [0, 4, 7, 11, 14], 'maj9'], ii: [2, [0, 3, 7, 10, 14], 'm9'], iii: [4, [0, 3, 7, 10], 'm7'],
+  IV: [5, [0, 4, 7, 11], 'maj7'], V: [7, [0, 4, 7, 10, 14], '9'], vi: [9, [0, 3, 7, 10, 14], 'm9'],
+};
+const pat = (s) => s.split('').map((c) => c === 'x');
+const PRESETS = {
+  'Rainy window': { bpm: 78, swing: 28, key: 'F', chords: ['ii', 'V', 'I', 'vi'], bass: true, sparkle: false, drums: {
+    kick: pat('x.........x.....'), snare: pat('....x.......x...'), hat: pat('x.x.x.x.x.x.x.x.'), open: pat('................'), clap: pat('................'), rim: pat('.......x......x.') } },
+  'Late night study': { bpm: 72, swing: 35, key: 'Eb', chords: ['IV', 'iii', 'ii', 'I'], bass: true, sparkle: true, drums: {
+    kick: pat('x......x..x.....'), snare: pat('....x.......x...'), hat: pat('x.xxx.x.x.xxx.x.'), open: pat('..............x.'), clap: pat('................'), rim: pat('................') } },
+  'Sunday coffee': { bpm: 88, swing: 20, key: 'A', chords: ['I', 'vi', 'IV', 'V'], bass: false, sparkle: true, drums: {
+    kick: pat('x.....x...x.....'), snare: pat('................'), hat: pat('..x...x...x...x.'), open: pat('................'), clap: pat('....x.......x...'), rim: pat('...x.......x....') } },
+  'Dusty boom bap': { bpm: 92, swing: 45, key: 'D', chords: ['vi', 'IV', 'I', 'V'], bass: true, sparkle: false, drums: {
+    kick: pat('x..x......x..x..'), snare: pat('....x.......x..x'), hat: pat('x.x.x.x.x.x.x.x.'), open: pat('......x.........'), clap: pat('................'), rim: pat('................') } },
+};
+
+const saved = SQ.store.get('loft', null);
+let S = saved || { ...structuredClone(PRESETS['Rainy window']), crackle: 45, wobble: 35, warm: 60, room: 35 };
+
+// ---------- UI ----------
+function buildSeq() {
+  const g = $('#seq'); g.innerHTML = '';
+  DRUMS.forEach((d) => {
+    g.append(el('div', { class: 'name' }, NAMES[d], el('button', { class: 'ghost', title: 'Preview', onclick: () => { ensureAudio(); voice[d](ac, live.drums, ac.currentTime + .01); } }, '♪')));
+    S.drums[d].forEach((on, i) => g.append(el('button', {
+      class: 'step' + (on ? ' on' : '') + (i % 4 === 0 ? ' beat' : ''), 'data-d': d, 'data-i': i, 'aria-label': `${NAMES[d]} step ${i + 1}`,
+      onclick: (e) => { S.drums[d][i] = !S.drums[d][i]; e.currentTarget.classList.toggle('on'); persist(); },
+    })));
+  });
+}
+function buildChords() {
+  const box = $('#chords'); box.innerHTML = '';
+  S.chords.forEach((deg, bar) => {
+    const sel = el('select', { onchange: (e) => { S.chords[bar] = e.target.value; buildChords(); persist(); } },
+      Object.keys(DEGREES).map((k) => el('option', { value: k, selected: k === deg }, k)));
+    box.append(el('div', { class: 'chord', id: 'chord' + bar }, el('span', { class: 'mute' }, 'Bar ' + (bar + 1)), el('b', {}, chordName(deg)), sel));
+  });
+}
+function chordName(deg) { const [off, , suf] = DEGREES[deg]; return KEYS[(KEYS.indexOf(S.key) + off) % 12] + suf; }
+const sliders = { bpm: (v) => v + ' bpm', swing: (v) => v + '%', crackle: (v) => v + '%', wobble: (v) => v + '%', warm: (v) => v + '%', room: (v) => v + '%' };
+function bindControls() {
+  $('#key').innerHTML = ''; KEYS.forEach((k) => $('#key').append(el('option', { selected: k === S.key }, k)));
+  for (const [id, fmt] of Object.entries(sliders)) {
+    const inp = $('#' + id); inp.value = S[id]; $('#' + id + 'L').textContent = fmt(S[id]);
+    inp.oninput = () => { S[id] = +inp.value; $('#' + id + 'L').textContent = fmt(S[id]); applyFx(); persist(); };
+  }
+  $('#bass').checked = S.bass; $('#sparkle').checked = S.sparkle;
+}
+$('#key').onchange = (e) => { S.key = e.target.value; buildChords(); persist(); };
+$('#bass').onchange = (e) => { S.bass = e.target.checked; persist(); };
+$('#sparkle').onchange = (e) => { S.sparkle = e.target.checked; persist(); };
+Object.keys(PRESETS).forEach((p) => $('#preset').append(el('option', {}, p)));
+$('#preset').prepend(el('option', { value: '', selected: true, disabled: true }, 'Presets…'));
+$('#preset').onchange = (e) => { Object.assign(S, structuredClone(PRESETS[e.target.value])); refresh(); };
+$('#clear').onclick = () => { DRUMS.forEach((d) => (S.drums[d] = new Array(16).fill(false))); refresh(); };
+$('#random').onclick = () => {
+  const r = Math.random, prob = { kick: .22, snare: 0, hat: .55, open: .06, clap: 0, rim: .1 };
+  DRUMS.forEach((d) => (S.drums[d] = S.drums[d].map((_, i) => r() < prob[d])));
+  S.drums.kick[0] = true; S.drums.snare = pat(r() < .5 ? '....x.......x...' : '....x.......x..x');
+  const progs = [['ii', 'V', 'I', 'vi'], ['I', 'vi', 'IV', 'V'], ['vi', 'IV', 'I', 'V'], ['IV', 'iii', 'ii', 'I'], ['I', 'iii', 'vi', 'IV']];
+  S.chords = SQ.pick(progs).slice(); S.key = SQ.pick(KEYS); S.bpm = 68 + Math.floor(r() * 24); S.swing = 15 + Math.floor(r() * 35);
+  refresh(); SQ.toast(`New loop in ${S.key}`);
+};
+function persist() { SQ.store.set('loft', S); }
+function refresh() { buildSeq(); buildChords(); bindControls(); applyFx(); persist(); }
+
+// ---------- audio engine (works for live AudioContext and OfflineAudioContext) ----------
+let ac, live, noiseBuf;
+function makeNoise(ctx, seconds = 2) {
+  const b = ctx.createBuffer(1, ctx.sampleRate * seconds, ctx.sampleRate), d = b.getChannelData(0);
+  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  return b;
+}
+function makeCrackle(ctx) {
+  const b = ctx.createBuffer(1, ctx.sampleRate * 4, ctx.sampleRate), d = b.getChannelData(0);
+  let brown = 0;
+  for (let i = 0; i < d.length; i++) {
+    brown = (brown + (Math.random() * 2 - 1) * .02) * .995;
+    d[i] = brown * .5 + (Math.random() < .0006 ? (Math.random() * 2 - 1) * .9 : 0) + (Math.random() < .00004 ? (Math.random() < .5 ? -1 : 1) : 0);
+  }
+  return b;
+}
+function makeImpulse(ctx, sec = 2.2) {
+  const len = ctx.sampleRate * sec, b = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let c = 0; c < 2; c++) { const d = b.getChannelData(c); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
+  return b;
+}
+// Build the master chain. Returns the input buses and the nodes applyFx tweaks.
+function buildChain(ctx, out) {
+  const n = { ctx };
+  n.master = ctx.createGain(); n.master.gain.value = .8;
+  n.lp = ctx.createBiquadFilter(); n.lp.type = 'lowpass';
+  n.comp = ctx.createDynamicsCompressor(); n.comp.threshold.value = -16; n.comp.ratio.value = 4;
+  n.drums = ctx.createGain(); n.drums.gain.value = .9;
+  n.keys = ctx.createGain(); n.keys.gain.value = .5;
+  // Tape wobble: slow LFO modulating a short delay on the keys bus
+  n.wobDelay = ctx.createDelay(.05); n.wobDelay.delayTime.value = .012;
+  n.lfo = ctx.createOscillator(); n.lfo.frequency.value = .6; n.lfoGain = ctx.createGain();
+  n.lfo.connect(n.lfoGain).connect(n.wobDelay.delayTime); n.lfo.start();
+  n.keys.connect(n.wobDelay).connect(n.lp);
+  n.drums.connect(n.lp);
+  n.verb = ctx.createConvolver(); n.verb.buffer = makeImpulse(ctx); n.verbGain = ctx.createGain();
+  n.lp.connect(n.comp); n.lp.connect(n.verb).connect(n.verbGain).connect(n.comp);
+  n.comp.connect(n.master).connect(out);
+  n.crackleSrc = ctx.createBufferSource(); n.crackleSrc.buffer = makeCrackle(ctx); n.crackleSrc.loop = true;
+  n.crackleHp = ctx.createBiquadFilter(); n.crackleHp.type = 'highpass'; n.crackleHp.frequency.value = 900;
+  n.crackleGain = ctx.createGain();
+  n.crackleSrc.connect(n.crackleHp).connect(n.crackleGain).connect(n.master); n.crackleSrc.start();
+  n.noise = makeNoise(ctx);
+  return n;
+}
+function applyFx(n = live) {
+  if (!n) return;
+  const t = n.ctx.currentTime;
+  n.lp.frequency.setTargetAtTime(600 + Math.pow(1 - S.warm / 100, 2) * 14000, t, .05);
+  n.lfoGain.gain.setTargetAtTime(S.wobble / 100 * .0045, t, .05);
+  n.verbGain.gain.setTargetAtTime(S.room / 100 * .6, t, .05);
+  n.crackleGain.gain.setTargetAtTime(S.crackle / 100 * .5, t, .05);
+}
+const env = (g, t, peak, a, d) => { g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(peak, t + a); g.gain.exponentialRampToValueAtTime(.0001, t + a + d); };
+function noiseHit(ctx, dest, t, type, freq, q, peak, dec) {
+  const src = ctx.createBufferSource(); src.buffer = (ctx === ac ? live : offline).noise;
+  const f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+  const g = ctx.createGain(); env(g, t, peak, .002, dec);
+  src.connect(f).connect(g).connect(dest); src.start(t, Math.random()); src.stop(t + dec + .05);
+}
+const voice = {
+  kick(ctx, dest, t) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(42, t + .14);
+    env(g, t, 1, .004, .45); o.connect(g).connect(dest); o.start(t); o.stop(t + .5);
+  },
+  snare(ctx, dest, t) {
+    noiseHit(ctx, dest, t, 'bandpass', 1700, .8, .55, .2);
+    const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'triangle'; o.frequency.value = 185;
+    env(g, t, .35, .002, .1); o.connect(g).connect(dest); o.start(t); o.stop(t + .15);
+  },
+  hat(ctx, dest, t) { noiseHit(ctx, dest, t, 'highpass', 7500, .7, .22, .045); },
+  open(ctx, dest, t) { noiseHit(ctx, dest, t, 'highpass', 6500, .7, .18, .32); },
+  clap(ctx, dest, t) { [0, .011, .023].forEach((d, i) => noiseHit(ctx, dest, t + d, 'bandpass', 1200, 1.2, i === 2 ? .5 : .3, i === 2 ? .18 : .02)); },
+  rim(ctx, dest, t) {
+    const o = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+    o.type = 'square'; o.frequency.value = 820; f.type = 'bandpass'; f.frequency.value = 1800;
+    env(g, t, .25, .001, .04); o.connect(f).connect(g).connect(dest); o.start(t); o.stop(t + .06);
+  },
+};
+const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
+function epiano(ctx, dest, t, midi, dur, vel = .12) {
+  // Two detuned sines and a quiet bell partial: a soft Rhodes-ish tone
+  const g = ctx.createGain(); g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vel, t + .015);
+  g.gain.exponentialRampToValueAtTime(vel * .35, t + .6); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  g.connect(dest);
+  [[0, 1], [6, 1], [1200, .08]].forEach(([cents, amp]) => {
+    const o = ctx.createOscillator(), og = ctx.createGain(); og.gain.value = amp;
+    o.frequency.value = mtof(midi); o.detune.value = cents + (Math.random() * 6 - 3);
+    o.connect(og).connect(g); o.start(t); o.stop(t + dur + .05);
+  });
+}
+function bassNote(ctx, dest, t, midi, dur) {
+  const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.value = mtof(midi);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.35, t + .02); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  o.connect(g).connect(dest); o.start(t); o.stop(t + dur + .05);
+}
+const PENTA = [0, 2, 4, 7, 9, 12, 14, 16];
+// Schedule one 16th step (step = 0..63 across 4 bars) at time t.
+function scheduleStep(ctx, chain, step, t, stepDur) {
+  const s = step % 16, bar = Math.floor(step / 16) % 4;
+  DRUMS.forEach((d) => S.drums[d][s] && voice[d](ctx, chain.drums, t));
+  const [off, ints] = DEGREES[S.chords[bar]], root = 48 + KEYS.indexOf(S.key) + off;
+  const r = root > 55 ? root - 12 : root;
+  if (s === 0) ints.forEach((iv, k) => epiano(ctx, chain.keys, t + k * .012, r + 12 + iv, stepDur * 15));
+  if (s === 10) ints.slice(1, 4).forEach((iv) => epiano(ctx, chain.keys, t, r + 12 + iv, stepDur * 5, .07));
+  if (S.bass && (s === 0 || s === 7 || s === 10)) bassNote(ctx, chain.drums, t, r - 12 + (s === 7 ? 7 : 0), stepDur * (s === 0 ? 6 : 3));
+  if (S.sparkle && s % 2 === 0 && SQ.hash(`${S.key}${bar}${s}${S.chords.join('')}`) % 5 === 0)
+    epiano(ctx, chain.keys, t, r + 24 + PENTA[SQ.hash(`${bar}${s}`) % PENTA.length], stepDur * 3, .06);
+}
+
+// ---------- live playback ----------
+let playing = false, nextTime = 0, step = 0, timer = null;
+const visQueue = [];
+function ensureAudio() {
+  if (ac) return;
+  ac = new AudioContext();
+  live = buildChain(ac, ac.destination);
+  live.analyser = ac.createAnalyser(); live.analyser.fftSize = 1024; live.master.connect(live.analyser);
+  applyFx();
+}
+const stepDur = () => 60 / S.bpm / 4;
+function tick() {
+  while (nextTime < ac.currentTime + .12) {
+    const swing = step % 2 ? S.swing / 100 * stepDur() * .5 : 0;
+    scheduleStep(ac, live, step, nextTime + swing, stepDur());
+    visQueue.push({ step, t: nextTime + swing });
+    nextTime += stepDur(); step = (step + 1) % 64;
+  }
+}
+function togglePlay() {
+  ensureAudio(); ac.resume();
+  playing = !playing;
+  $('#play').textContent = playing ? '■' : '▶';
+  if (playing) { step = 0; nextTime = ac.currentTime + .05; timer = setInterval(tick, 25); tick(); live.crackleGain.gain.value = S.crackle / 100 * .5; }
+  else { clearInterval(timer); visQueue.length = 0; live.crackleGain.gain.setTargetAtTime(0, ac.currentTime, .1); $('#status').textContent = 'Stopped'; SQ.$$('.now').forEach((n) => n.classList.remove('now')); }
+}
+$('#play').onclick = togglePlay;
+addEventListener('keydown', (e) => { if (e.code === 'Space' && !SQ.isTyping(e)) { e.preventDefault(); togglePlay(); } });
+
+const scope = $('#scope'), sctx = scope.getContext('2d');
+function frame() {
+  requestAnimationFrame(frame);
+  if (!ac) return;
+  let cur = null;
+  while (visQueue.length && visQueue[0].t <= ac.currentTime) cur = visQueue.shift();
+  if (cur && playing) {
+    const s = cur.step % 16, bar = Math.floor(cur.step / 16);
+    SQ.$$('.step.now').forEach((n) => n.classList.remove('now'));
+    SQ.$$(`.step[data-i="${s}"]`).forEach((n) => n.classList.add('now'));
+    SQ.$$('.chord').forEach((c, i) => c.classList.toggle('now', i === bar));
+    $('#status').textContent = `Bar ${bar + 1} · ${chordName(S.chords[bar])}`;
+  }
+  const w = scope.width = scope.clientWidth * devicePixelRatio, h = scope.height = 70 * devicePixelRatio;
+  const data = new Uint8Array(live.analyser.fftSize); live.analyser.getByteTimeDomainData(data);
+  sctx.strokeStyle = getComputedStyle(document.body).getPropertyValue('--accent'); sctx.lineWidth = 2 * devicePixelRatio; sctx.beginPath();
+  for (let i = 0; i < data.length; i++) { const x = i / data.length * w, y = data[i] / 255 * h; i ? sctx.lineTo(x, y) : sctx.moveTo(x, y); }
+  sctx.stroke();
+}
+requestAnimationFrame(frame);
+
+// ---------- export ----------
+let offline = null;
+$('#export').onclick = async () => {
+  const loops = +$('#loops').value, rate = 44100, len = loops * 64 * stepDur() + 2.5;
+  const ctx = new OfflineAudioContext(2, Math.ceil(rate * len), rate);
+  offline = buildChain(ctx, ctx.destination); applyFx(offline);
+  for (let i = 0; i < loops * 64; i++) {
+    const swing = i % 2 ? S.swing / 100 * stepDur() * .5 : 0;
+    scheduleStep(ctx, offline, i, i * stepDur() + swing, stepDur());
+  }
+  $('#export').disabled = true; $('#export').textContent = 'Rendering…';
+  const buf = await ctx.startRendering();
+  $('#export').disabled = false; $('#export').textContent = 'Export WAV';
+  SQ.download(SQ.encodeWAV(buf), `loft-${S.key}-${S.bpm}bpm-${SQ.stamp()}.wav`);
+};
+
+refresh();
+</script>
+</body>
+</html>
