@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wallsmith · Sidequest</title>
+<link rel="stylesheet" href="../../shared/sq.css">
+<style>
+  :root { --accent: #7c8cff; --accent-ink: #070a24; }
+  #cv { max-width: calc(100% - 32px); max-height: calc(100% - 32px); border-radius: 8px; box-shadow: 0 10px 40px #0008; }
+  @media (min-width: 821px) { .sq-stage { position: sticky; top: 69px; height: calc(100vh - 84px); } }
+  .styles { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .pal { display: flex; gap: 6px; flex-wrap: wrap; }
+  .pal input[type=color] { width: 30px; height: 30px; }
+  .pal-presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .pal-presets button { height: 26px; padding: 0; overflow: hidden; display: flex; }
+  .pal-presets button span { flex: 1; height: 100%; }
+</style>
+</head>
+<body>
+<header class="sq-top">
+  <a class="home" href="../../index.html">← Sidequest</a>
+  <h1><span class="dot"></span>Wallsmith</h1>
+  <span class="mute">procedural wallpapers</span>
+  <div class="spacer"></div>
+  <div class="actions">
+    <button id="shuffle" data-smoke>Shuffle all</button>
+    <button id="reseed" data-smoke>New seed</button>
+    <button id="download" class="primary">Download PNG</button>
+  </div>
+</header>
+<main class="sq-app">
+  <aside class="sq-side">
+    <section class="panel">
+      <h2>Style</h2>
+      <div class="styles" id="styles"></div>
+    </section>
+    <section class="panel stack">
+      <h2>Colors</h2>
+      <div class="pal" id="pal"></div>
+      <div class="pal-presets" id="palPresets"></div>
+      <button id="randPal" data-smoke>Random palette</button>
+    </section>
+    <section class="panel stack">
+      <h2>Tweak</h2>
+      <label class="field"><span>Detail <b id="detailL"></b></span><input type="range" id="detail" min="1" max="100"></label>
+      <label class="field"><span>Film grain <b id="grainL"></b></span><input type="range" id="grain" min="0" max="100"></label>
+      <label class="field"><span>Seed</span><input type="text" id="seed"></label>
+    </section>
+    <section class="panel stack">
+      <h2>Size</h2>
+      <select id="res"></select>
+      <div class="row"><input type="number" id="w" style="width:90px"> × <input type="number" id="h" style="width:90px"></div>
+    </section>
+  </aside>
+  <div class="sq-stage"><canvas id="cv"></canvas></div>
+</main>
+
+<script src="../../shared/sq.js"></script>
+<script>
+const { $, el } = SQ;
+const dpr = window.devicePixelRatio || 1;
+const screenRes = [Math.round(screen.width * dpr), Math.round(screen.height * dpr)];
+const RES = [
+  ['This screen', ...screenRes], ['1080p', 1920, 1080], ['1440p', 2560, 1440], ['4K', 3840, 2160],
+  ['Ultrawide', 3440, 1440], ['Phone', 1170, 2532], ['Square', 2048, 2048], ['Custom', 0, 0],
+];
+const PALS = [
+  ['#0b1026', '#3a1c71', '#d76d77', '#ffaf7b'], ['#03071e', '#370617', '#d00000', '#ffba08'],
+  ['#051923', '#003554', '#006494', '#00a6fb'], ['#1b4332', '#40916c', '#95d5b2', '#f1faee'],
+  ['#22223b', '#4a4e69', '#9a8c98', '#f2e9e4'], ['#10002b', '#5a189a', '#c77dff', '#e0aaff'],
+  ['#000000', '#14213d', '#fca311', '#e5e5e5'], ['#ff595e', '#ffca3a', '#8ac926', '#1982c4'],
+];
+const S = Object.assign({ style: 'mesh', pal: PALS[0].slice(), detail: 50, grain: 25, seed: 'sidequest', res: 0, w: screenRes[0], h: screenRes[1] }, SQ.store.get('wallsmith', {}));
+
+// ---------- helpers ----------
+const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const mix = (a, b, t) => { const A = hexRgb(a), B = hexRgb(b); return `rgb(${A.map((v, i) => Math.round(v + (B[i] - v) * t)).join(',')})`; };
+function noise2(rng) {
+  // Value noise with smooth interpolation over a hashed lattice.
+  const perm = new Uint8Array(512), vals = new Float32Array(256);
+  for (let i = 0; i < 256; i++) { perm[i] = i; vals[i] = rng(); }
+  for (let i = 255; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [perm[i], perm[j]] = [perm[j], perm[i]]; }
+  for (let i = 0; i < 256; i++) perm[i + 256] = perm[i];
+  const sm = (t) => t * t * (3 - 2 * t);
+  return (x, y) => {
+    const xi = Math.floor(x) & 255, yi = Math.floor(y) & 255, xf = x - Math.floor(x), yf = y - Math.floor(y);
+    const v = (a, b) => vals[perm[perm[a] + b]];
+    const u = sm(xf), w = sm(yf);
+    return (v(xi, yi) * (1 - u) + v(xi + 1, yi) * u) * (1 - w) + (v(xi, yi + 1) * (1 - u) + v(xi + 1, yi + 1) * u) * w;
+  };
+}
+
+// ---------- styles: each draws into (c, w, h) using rng; sizes are relative so previews match exports ----------
+const STYLES = {
+  mesh: { name: 'Mesh gradient', draw(c, w, h, r, P, d) {
+    c.fillStyle = P[0]; c.fillRect(0, 0, w, h);
+    const n = 3 + Math.round(d / 15), m = Math.max(w, h);
+    c.filter = `blur(${m * .08}px)`;
+    for (let i = 0; i < n; i++) {
+      c.fillStyle = P[1 + (i % (P.length - 1))]; c.globalAlpha = .55 + r() * .4;
+      c.beginPath(); c.ellipse(r() * w, r() * h, m * (.15 + r() * .3), m * (.12 + r() * .25), r() * Math.PI, 0, 7); c.fill();
+    }
+    c.filter = 'none'; c.globalAlpha = 1;
+  } },
+  waves: { name: 'Waves', draw(c, w, h, r, P, d) {
+    const g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, P[0]); g.addColorStop(1, P[1]);
+    c.fillStyle = g; c.fillRect(0, 0, w, h);
+    const layers = 3 + Math.round(d / 14);
+    for (let i = 0; i < layers; i++) {
+      const t = i / (layers - 1), base = h * (.35 + t * .6), amp = h * (.03 + r() * .06), f1 = 1 + r() * 3, f2 = 2 + r() * 5, ph = r() * 7;
+      c.fillStyle = mix(P[Math.min(P.length - 1, 1 + Math.floor(t * (P.length - 1)))], P[P.length - 1], t * .3);
+      c.beginPath(); c.moveTo(0, h);
+      for (let x = 0; x <= w; x += w / 200) { const u = x / w; c.lineTo(x, base + Math.sin(u * f1 * 6.28 + ph) * amp + Math.sin(u * f2 * 6.28 + ph * 2) * amp * .4); }
+      c.lineTo(w, h); c.fill();
+    }
+  } },
+  poly: { name: 'Low-poly', draw(c, w, h, r, P, d) {
+    const cols = 4 + Math.round(d / 6), rows = Math.max(2, Math.round(cols * h / w)), pts = [];
+    for (let y = 0; y <= rows; y++) for (let x = 0; x <= cols; x++) {
+      const edgeX = x === 0 || x === cols, edgeY = y === 0 || y === rows;
+      pts.push([(x + (edgeX ? 0 : (r() - .5) * .8)) / cols * w, (y + (edgeY ? 0 : (r() - .5) * .8)) / rows * h]);
+    }
+    const at = (x, y) => pts[y * (cols + 1) + x];
+    const g = c.createLinearGradient(0, 0, w, h); P.forEach((col, i) => g.addColorStop(i / (P.length - 1), col));
+    const pick = el('canvas', { width: 64, height: 64 }).getContext('2d', { willReadFrequently: true });
+    const gg = pick.createLinearGradient(0, 0, 64, 64); P.forEach((col, i) => gg.addColorStop(i / (P.length - 1), col)); pick.fillStyle = gg; pick.fillRect(0, 0, 64, 64);
+    const colorAt = (x, y, shade) => { const p = pick.getImageData(Math.min(63, x / w * 64), Math.min(63, y / h * 64), 1, 1).data; return `rgb(${p[0] * shade},${p[1] * shade},${p[2] * shade})`; };
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      const a = at(x, y), b = at(x + 1, y), cc = at(x + 1, y + 1), dd = at(x, y + 1);
+      const tris = r() < .5 ? [[a, b, cc], [a, cc, dd]] : [[a, b, dd], [b, cc, dd]];
+      tris.forEach((t) => {
+        const cx = (t[0][0] + t[1][0] + t[2][0]) / 3, cy = (t[0][1] + t[1][1] + t[2][1]) / 3;
+        c.fillStyle = c.strokeStyle = colorAt(cx, cy, .82 + r() * .3);
+        c.beginPath(); c.moveTo(...t[0]); c.lineTo(...t[1]); c.lineTo(...t[2]); c.closePath(); c.fill(); c.lineWidth = 1; c.stroke();
+      });
+    }
+  } },
+  bauhaus: { name: 'Bauhaus', draw(c, w, h, r, P, d) {
+    c.fillStyle = P[P.length - 1]; c.fillRect(0, 0, w, h);
+    const cell = Math.max(w, h) / (3 + Math.round(d / 12));
+    for (let y = 0; y < h; y += cell) for (let x = 0; x < w; x += cell) {
+      const col = () => P[Math.floor(r() * (P.length - 1))];
+      c.fillStyle = col(); c.fillRect(x, y, cell + 1, cell + 1);
+      c.fillStyle = col();
+      const k = Math.floor(r() * 5);
+      c.beginPath();
+      if (k === 0) { c.arc(x + cell / 2, y + cell / 2, cell * .4, 0, 7); }
+      else if (k === 1) { c.moveTo(x, y); c.arc(x, y, cell, 0, Math.PI / 2); }
+      else if (k === 2) { c.moveTo(x, y + cell); c.lineTo(x + cell, y + cell); c.lineTo(x + cell / 2, y); }
+      else if (k === 3) { c.arc(x + cell / 2, y + cell, cell / 2, Math.PI, 0); }
+      else { c.rect(x + cell * .25, y, cell * .5, cell); }
+      c.fill();
+    }
+  } },
+  retro: { name: 'Retro sun', draw(c, w, h, r, P, d) {
+    const hz = h * .62;
+    const sky = c.createLinearGradient(0, 0, 0, hz); sky.addColorStop(0, P[0]); sky.addColorStop(1, P[1]);
+    c.fillStyle = sky; c.fillRect(0, 0, w, hz);
+    for (let i = 0; i < 60 + d; i++) { c.fillStyle = `rgba(255,255,255,${r() * .7})`; c.fillRect(r() * w, r() * hz * .8, Math.max(1, w / 1200), Math.max(1, w / 1200)); }
+    const R = Math.min(w, h) * .26, sx = w / 2, sy = hz - R * .25;
+    const sun = c.createLinearGradient(0, sy - R, 0, sy + R); sun.addColorStop(0, P[3] || P[2]); sun.addColorStop(1, P[2]);
+    c.save(); c.beginPath(); c.arc(sx, sy, R, 0, 7); c.clip(); c.fillStyle = sun; c.fillRect(sx - R, sy - R, R * 2, R * 2);
+    c.fillStyle = P[1]; for (let i = 0; i < 7; i++) { const yy = sy + R * (.05 + i * .14); c.fillRect(sx - R, yy, R * 2, R * .02 + i * R * .012); }
+    c.restore();
+    c.fillStyle = P[0]; c.fillRect(0, hz, w, h - hz);
+    c.strokeStyle = P[2]; c.lineWidth = Math.max(1, w / 900); c.globalAlpha = .8;
+    for (let i = -20; i <= 20; i++) { c.beginPath(); c.moveTo(w / 2 + i * w * .01, hz); c.lineTo(w / 2 + i * w * .12, h); c.stroke(); }
+    for (let i = 1; i < 12 + d / 10; i++) { const y = hz + (h - hz) * Math.pow(i / (12 + d / 10), 1.8); c.beginPath(); c.moveTo(0, y); c.lineTo(w, y); c.stroke(); }
+    c.globalAlpha = 1;
+  } },
+  flow: { name: 'Flow field', draw(c, w, h, r, P, d) {
+    c.fillStyle = P[0]; c.fillRect(0, 0, w, h);
+    const nz = noise2(r), sc = 2.2 / Math.max(w, h) * (1 + d / 40), n = 600 + d * 30, step = Math.max(w, h) / 500;
+    c.lineWidth = Math.max(1, Math.max(w, h) / 1100); c.lineCap = 'round';
+    for (let i = 0; i < n; i++) {
+      let x = r() * w, y = r() * h;
+      c.strokeStyle = P[1 + Math.floor(r() * (P.length - 1))]; c.globalAlpha = .35 + r() * .5;
+      c.beginPath(); c.moveTo(x, y);
+      for (let k = 0; k < 60; k++) { const a = nz(x * sc, y * sc) * Math.PI * 4; x += Math.cos(a) * step; y += Math.sin(a) * step; c.lineTo(x, y); }
+      c.stroke();
+    }
+    c.globalAlpha = 1;
+  } },
+};
+
+function paint(canvas, w, h) {
+  canvas.width = w; canvas.height = h;
+  const c = canvas.getContext('2d'), r = SQ.rng(S.seed + S.style);
+  STYLES[S.style].draw(c, w, h, r, S.pal, S.detail);
+  if (S.grain) {
+    const img = c.getImageData(0, 0, w, h), d = img.data, g = S.grain * .6, gr = SQ.rng(S.seed + 'grain');
+    for (let i = 0; i < d.length; i += 4) { const k = (gr() - .5) * g; d[i] += k; d[i + 1] += k; d[i + 2] += k; }
+    c.putImageData(img, 0, 0);
+  }
+}
+const cv = $('#cv');
+function render() {
+  const max = 1400, s = Math.min(1, max / Math.max(S.w, S.h));
+  paint(cv, Math.round(S.w * s), Math.round(S.h * s));
+  SQ.store.set('wallsmith', S);
+}
+
+// ---------- UI ----------
+function buildUi() {
+  $('#styles').innerHTML = '';
+  for (const [k, v] of Object.entries(STYLES)) $('#styles').append(el('button', { class: S.style === k ? 'on' : '', onclick: () => { S.style = k; buildUi(); render(); } }, v.name));
+  $('#pal').innerHTML = '';
+  S.pal.forEach((col, i) => $('#pal').append(el('input', { type: 'color', value: col, oninput: (e) => { S.pal[i] = e.target.value; render(); } })));
+  $('#detail').value = S.detail; $('#detailL').textContent = S.detail;
+  $('#grain').value = S.grain; $('#grainL').textContent = S.grain;
+  $('#seed').value = S.seed; $('#res').value = S.res; $('#w').value = S.w; $('#h').value = S.h;
+}
+PALS.forEach((p) => $('#palPresets').append(el('button', { title: 'Use palette', onclick: () => { S.pal = p.slice(); buildUi(); render(); } }, p.map((c) => el('span', { style: { background: c } })))));
+RES.forEach(([n, w, h], i) => $('#res').append(el('option', { value: i }, w ? `${n} · ${w}×${h}` : n)));
+$('#res').onchange = (e) => { S.res = +e.target.value; const [, w, h] = RES[S.res]; if (w) { S.w = w; S.h = h; } buildUi(); render(); };
+['w', 'h'].forEach((k) => ($('#' + k).onchange = (e) => { S[k] = Math.max(64, Math.min(8192, +e.target.value || 64)); S.res = RES.length - 1; buildUi(); render(); }));
+$('#detail').oninput = (e) => { S.detail = +e.target.value; $('#detailL').textContent = S.detail; render(); };
+$('#grain').oninput = (e) => { S.grain = +e.target.value; $('#grainL').textContent = S.grain; render(); };
+$('#seed').oninput = (e) => { S.seed = e.target.value; render(); };
+const words = ['moss', 'ember', 'tide', 'neon', 'dusk', 'orbit', 'velvet', 'static', 'bloom', 'drift', 'koi', 'aurora', 'quartz', 'fable'];
+$('#reseed').onclick = () => { S.seed = SQ.pick(words) + '-' + Math.floor(Math.random() * 1000); buildUi(); render(); };
+$('#randPal').onclick = () => {
+  const h0 = Math.random() * 360, spread = 25 + Math.random() * 60, dark = Math.random() < .7;
+  S.pal = [0, 1, 2, 3].map((i) => hsl((h0 + i * spread) % 360, 55 + Math.random() * 35, dark ? 12 + i * 20 : 85 - i * 18));
+  buildUi(); render();
+};
+$('#shuffle').onclick = () => { S.style = SQ.pick(Object.keys(STYLES)); $('#randPal').onclick(); $('#reseed').onclick(); S.detail = 20 + Math.floor(Math.random() * 70); buildUi(); render(); };
+function hsl(h, s, l) {
+  s /= 100; l /= 100;
+  const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l), f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+  return '#' + [f(0), f(8), f(4)].map((x) => Math.round(x * 255).toString(16).padStart(2, '0')).join('');
+}
+$('#download').onclick = async () => {
+  $('#download').textContent = 'Rendering…'; await new Promise((r) => setTimeout(r, 30));
+  const big = el('canvas'); paint(big, S.w, S.h);
+  SQ.download(await SQ.canvasBlob(big), `wallsmith-${S.style}-${S.w}x${S.h}-${S.seed}.png`);
+  $('#download').textContent = 'Download PNG';
+};
+buildUi(); render();
+</script>
+</body>
+</html>

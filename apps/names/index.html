@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Namewell · Sidequest</title>
+<link rel="stylesheet" href="../../shared/sq.css">
+<style>
+  :root { --accent: #fbbf24; --accent-ink: #1f1500; }
+  .cats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .cats button { justify-content: flex-start; }
+  .results { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; padding: 16px; align-content: start; width: 100%; }
+  .sq-stage { place-items: stretch; align-content: start; }
+  .name { display: flex; align-items: center; gap: 8px; padding: 14px 14px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); font-size: 17px; font-weight: 700; cursor: pointer; animation: pop .25s ease both; text-align: left; justify-content: space-between; white-space: normal; }
+  .name:hover { border-color: var(--accent); }
+  .name small { display: block; font-size: 11px; font-weight: 500; color: var(--mute); margin-top: 2px; }
+  .name .fav { background: none; border: 0; font-size: 18px; padding: 0 2px; color: var(--mute); }
+  .name .fav.on { color: var(--accent); }
+  @keyframes pop { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+  .favs { display: grid; gap: 4px; max-height: 260px; overflow-y: auto; }
+  .favs div { display: flex; justify-content: space-between; gap: 6px; align-items: center; font-weight: 600; }
+  .favs button { padding: 1px 7px; font-size: 11px; }
+  .go { padding: 14px; font-size: 16px; width: 100%; }
+</style>
+</head>
+<body>
+<header class="sq-top">
+  <a class="home" href="../../index.html">← Sidequest</a>
+  <h1><span class="dot"></span>Namewell</h1>
+  <span class="mute">names for projects, characters, usernames and bands</span>
+  <div class="spacer"></div>
+  <div class="actions"><button id="copyAll">Copy all</button></div>
+</header>
+<main class="sq-app">
+  <aside class="sq-side">
+    <section class="panel">
+      <h2>What needs a name?</h2>
+      <div class="cats" id="cats"></div>
+    </section>
+    <section class="panel stack">
+      <h2>Options</h2>
+      <label class="field"><span>Include a word (optional)</span><input type="text" id="seedWord" placeholder="e.g. pixel, shadow, taco"></label>
+      <label class="field"><span>Starts with</span><input type="text" id="starts" maxlength="3" placeholder="any"></label>
+      <label class="field"><span>Max length <b id="maxL"></b></span><input type="range" id="max" min="4" max="30"></label>
+      <button class="primary go" id="gen" data-smoke>Generate <kbd>Space</kbd></button>
+    </section>
+    <section class="panel">
+      <h2>Favorites</h2>
+      <div class="favs" id="favs"></div>
+    </section>
+  </aside>
+  <div class="sq-stage"><div class="results" id="results"></div></div>
+</main>
+
+<script src="../../shared/sq.js"></script>
+<script>
+const { $, el } = SQ;
+const W = {
+  adj: 'swift bright quiet hollow golden lucky tiny mighty neon velvet cosmic rusty silver lazy wild crimson frozen electric paper hidden brave clever sleepy fuzzy feral cursed sacred solar lunar humble rogue atomic silent'.split(' '),
+  noun: 'fox owl comet ember river pixel atlas harbor beacon orbit lantern forge circuit meadow tiger falcon prism signal canyon nova echo vertex ripple sparrow anchor moth glacier compass rocket badger kite engine'.split(' '),
+  tech: 'ly ify io hub kit labs base stack flow loop works sync craft deck verse cast box mind spark dash'.split(' '),
+  techRoot: 'zap nim flux vox lume byte koda quill dex nova ora tilt glyph mesa vanta pico mira juno omni hexa'.split(' '),
+  band: 'Wolves Saints Machines Ghosts Daughters Lizards Hearts Prophets Satellites Kings Bandits Tigers Spiders Mirrors Vandals Angels Robots Pilots Strangers Rivals'.split(' '),
+  bandAdj: 'Arctic Velvet Electric Midnight Broken Neon Glass Paper Cosmic Silent Rusted Burning Plastic Golden Hollow Static Liquid Radio Lonely Northern'.split(' '),
+  odd: 'Toaster|Llama|Spaghetti|Lawnmower|Dentist|Pancake|Goose|Cardigan|Volcano|Parking Lot|Vending Machine|Grandma|Houseplant|Sandwich|Taxidermy|Kazoo'.split('|'),
+  fantasyPre: 'Ael Bra Cor Dra El Fen Gal Hal Ith Jor Kael Lor Mal Ner Or Pyr Quel Ryn Syl Thal Ul Val Wyn Xan Yr Zeph'.split(' '),
+  fantasyMid: 'a ae an ar e el en i ia or ri ys o u'.split(' '),
+  fantasySuf: 'dor riel wyn thas ion mir dra nar los wen vyn ris thor gorn lith mar sa ra iel ius'.split(' '),
+  epithet: 'the Bold|the Unseen|of the Ashen Vale|Stormborn|the Wanderer|Ironheart|the Last|of Seven Winds|Duskblade|the Clever|Oathbreaker|the Merciful|Lightbringer|of the Deep Wood'.split('|'),
+  scifiFirst: 'Kai Nova Rex Juno Orion Vega Zane Lyra Cass Talon Echo Ryn Sol Mara Dex Ira Axel Nyx Cole Wren'.split(' '),
+  scifiLast: 'Voss Kade Thorne Okafor Reyes Vance Achterberg Quill Stroud Nakamura Halcyon Drax Mercer Sato Kowal Ibarra Lindqvist Rook Ashby Castellan'.split(' '),
+  gamer: 'Shadow Toxic Frost Blaze Venom Ghost Pixel Turbo Night Rage Sniper Ninja Hyper Chaos Void Storm Glitch Wolf Viper Phantom Noodle Potato Waffle Goblin'.split(' '),
+  gamer2: 'Slayer Hunter Lord King Master Reaper Bot Gamer Byte Fang Strike Wizard Goblin Nugget Gremlin Bean Beast Knight Raider Sauce'.split(' '),
+  hero: 'Captain Doctor Lady Mister Professor Agent The Night Iron Quantum Shadow Silver Crimson Atomic Mega'.split(' '),
+  heroNoun: 'Falcon Comet Static Thunder Venom Spectre Cobalt Tempest Vortex Sentinel Phoenix Paradox Blitz Mirage Titan Hex Nebula'.split(' '),
+  villainPre: 'Baron Count Lord Mistress Dr. General The'.split(' '),
+  pet: 'Biscuit|Noodle|Pickles|Waffles|Mochi|Pudding|Muffin|Bean|Nugget|Pepper|Tofu|Sprout|Button|Ziggy|Pebbles|Gizmo|Socks|Toast|Churro|Dumpling|Sir Fluffington|Lord Whiskers|Captain Snuggles|Professor Wiggles'.split('|'),
+  placePre: 'Ash Bright Cold Dun Elder Frost Glen Haven Iron Kings Lake Mill North Oak Raven Silver Stone Thorn West Wolf Amber Black'.split(' '),
+  placeSuf: 'ford hollow mere wick shire vale crest moor fell haven reach bury march gate wood port stead watch brook'.split(' '),
+  wifi: ['Pretty Fly for a WiFi', 'Bill Wi the Science Fi', 'The LAN Before Time', 'Abraham Linksys', 'Hide Yo Kids Hide Yo WiFi', 'Wu-Tang LAN', 'FBI Surveillance Van', 'It Burns When IP', 'Get Off My LAN', 'The Promised LAN', 'Router? I Hardly Know Her', 'Loading…', 'Password is Password', 'No More Mr WiFi', 'Tell My WiFi Love Her', 'Silence of the LANs', 'Nacho WiFi'],
+};
+const cap = (s) => s[0].toUpperCase() + s.slice(1);
+const P = (a) => SQ.pick(a);
+let kw = '';
+const withKw = (fallback) => kw || fallback;
+const CATS = {
+  project: { icon: '🚀', name: 'Project / app', gen: () => SQ.pick([
+    () => cap(withKw(P(W.techRoot))) + P(W.tech),
+    () => cap(P(W.adj)) + cap(withKw(P(W.noun))),
+    () => cap(withKw(P(W.noun))) + P(['ly', 'r', 'io', 'kit', 'ster', 'ify']),
+    () => cap(P(W.techRoot)) + cap(P(W.noun)),
+    () => `${cap(withKw(P(W.noun)))} ${P(['Labs', 'Studio', 'Works', 'OS', 'Engine'])}`,
+  ])(), note: () => P(['short and brandable', 'sounds like a tool', 'domain-friendly', 'punchy', 'feels open-source']) },
+  fantasy: { icon: '🧝', name: 'Fantasy character', gen: () => {
+    const n = (kw ? cap(kw.slice(0, 3)) : P(W.fantasyPre)) + (Math.random() < .6 ? P(W.fantasyMid) : '') + P(W.fantasySuf);
+    return Math.random() < .5 ? `${n} ${P(W.epithet)}` : n;
+  }, note: () => P(['elf', 'wizard', 'ranger', 'paladin', 'bard', 'rogue', 'dragon rider', 'druid']) },
+  scifi: { icon: '👩‍🚀', name: 'Sci-fi character', gen: () => `${Math.random() < .3 ? P(['Cmdr.', 'Dr.', 'Capt.', 'Lt.']) + ' ' : ''}${P(W.scifiFirst)} ${kw ? cap(kw) : P(W.scifiLast)}`, note: () => P(['pilot', 'engineer', 'smuggler', 'android', 'captain', 'medic', 'hacker']) },
+  username: { icon: '🎮', name: 'Username / gamertag', gen: () => SQ.pick([
+    () => `${P(W.gamer)}${cap(withKw(P(W.gamer2)))}`,
+    () => `x${P(W.gamer)}${P(W.gamer2)}x`,
+    () => `${withKw(P(W.gamer)).toLowerCase()}_${P(W.gamer2).toLowerCase()}${Math.floor(Math.random() * 99)}`,
+    () => `The${P(W.adj).replace(/^./, (c) => c.toUpperCase())}${cap(withKw(P(W.noun)))}`,
+    () => `${P(W.gamer)}${Math.floor(Math.random() * 9000 + 1000)}`,
+  ])(), note: () => P(['tryhard', 'casual', 'chaotic', 'speedrunner', 'support main', 'sweaty']) },
+  band: { icon: '🎸', name: 'Band name', gen: () => SQ.pick([
+    () => `The ${P(W.bandAdj)} ${kw ? cap(kw) + 's' : P(W.band)}`,
+    () => `${P(W.odd)} ${P(['Funeral', 'Riot', 'Society', 'Club', 'Ritual', 'Disaster'])}`,
+    () => `${kw ? cap(kw) : P(W.bandAdj)} & the ${P(W.band)}`,
+    () => `${P(W.bandAdj)} ${P(W.odd)}`,
+    () => `${cap(P(W.noun))}${P(['', 's'])} of ${P(['Saturn', 'Ohio', 'Glass', 'Tomorrow', 'the Void', 'Concrete'])}`,
+  ])(), note: () => P(['indie rock', 'synthwave', 'emo revival', 'jazz fusion', 'math rock', 'garage punk', 'dream pop', 'lo-fi']) },
+  hero: { icon: '🦸', name: 'Hero / villain', gen: () => Math.random() < .55 ? `${P(W.hero)} ${kw ? cap(kw) : P(W.heroNoun)}` : `${P(W.villainPre)} ${kw ? cap(kw) : P(W.heroNoun)}${P(['', 'us', 'ix', 'or'])}`, note: () => P(['hero', 'villain', 'anti-hero', 'sidekick', 'mastermind']) },
+  pet: { icon: '🐶', name: 'Pet name', gen: () => kw ? `${P(['Sir', 'Lady', 'Captain', 'Little', 'Big'])} ${cap(kw)}` : P(W.pet), note: () => P(['dog', 'cat', 'hamster', 'goldfish', 'parrot', 'gecko']) },
+  place: { icon: '🏰', name: 'Town / place', gen: () => `${kw ? cap(kw) : P(W.placePre)}${P(W.placeSuf)}${Math.random() < .25 ? ' ' + P(['Keep', 'Crossing', 'Hollow', 'Falls', 'Spire']) : ''}`, note: () => P(['village', 'port city', 'mountain fort', 'trading town', 'ruins']) },
+  wifi: { icon: '📶', name: 'Wi-Fi name', gen: () => kw ? `${cap(kw)}'s ${P(['Secret', 'Free', 'Haunted', 'Spicy', 'Forbidden'])} WiFi` : P(W.wifi), note: () => P(['neighbors will laugh', 'classic', 'dad joke']) },
+  startup: { icon: '💼', name: 'Startup', gen: () => SQ.pick([
+    () => cap(withKw(P(W.techRoot))).replace(/[aeiou]$/, '') + P(['r', 'ly', 'io', 'able', 'ster']),
+    () => `${cap(withKw(P(W.noun)))}${P(['AI', 'HQ', 'Pay', 'Go', 'Hub'])}`,
+    () => `${P(['Uber', 'Airbnb', 'Tinder', 'Spotify', 'Notion'])} for ${P(['dogs', 'plants', 'grandmas', 'socks', 'naps', 'homework'])}`,
+  ])(), note: () => P(['Series A vibes', 'pre-seed', 'YC reject', 'unicorn hopeful', 'bootstrapped']) },
+};
+const S = Object.assign({ cat: 'project', max: 22, favs: [] }, SQ.store.get('namewell', {}));
+let current = [];
+
+function generate() {
+  kw = $('#seedWord').value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  const starts = $('#starts').value.trim().toLowerCase(), cat = CATS[S.cat], out = new Set();
+  let tries = 0;
+  while (out.size < 18 && tries++ < 3000) {
+    const n = cat.gen();
+    if (n.length > S.max) continue;
+    if (starts && !n.toLowerCase().startsWith(starts)) continue;
+    out.add(n);
+  }
+  current = [...out];
+  const box = $('#results'); box.innerHTML = '';
+  if (!current.length) box.append(el('p', { class: 'mute' }, 'No names fit those filters. Loosen them a bit.'));
+  current.forEach((n, i) => {
+    const fav = S.favs.includes(n);
+    box.append(el('div', { class: 'name', style: { animationDelay: i * 18 + 'ms' }, title: 'Click to copy', onclick: () => copy(n) },
+      el('span', {}, n, el('small', {}, cat.note())),
+      el('button', { class: 'fav' + (fav ? ' on' : ''), title: 'Save to favorites', onclick: (e) => { e.stopPropagation(); toggleFav(n); e.currentTarget.classList.toggle('on'); e.currentTarget.textContent = S.favs.includes(n) ? '★' : '☆'; } }, fav ? '★' : '☆')));
+  });
+}
+function toggleFav(n) { S.favs = S.favs.includes(n) ? S.favs.filter((x) => x !== n) : [n, ...S.favs]; save(); renderFavs(); }
+function renderFavs() {
+  const box = $('#favs'); box.innerHTML = '';
+  if (!S.favs.length) box.append(el('span', { class: 'mute' }, 'Star names to keep them here.'));
+  S.favs.forEach((n) => box.append(el('div', {}, el('span', { style: { cursor: 'copy' }, onclick: () => copy(n) }, n), el('button', { onclick: () => toggleFav(n) }, '×'))));
+}
+async function copy(t) { try { await navigator.clipboard.writeText(t); SQ.toast(`Copied "${t}"`); } catch { SQ.toast(t); } }
+function save() { SQ.store.set('namewell', S); }
+function ui() {
+  $('#cats').innerHTML = '';
+  for (const [k, v] of Object.entries(CATS)) $('#cats').append(el('button', { class: S.cat === k ? 'on' : '', onclick: () => { S.cat = k; save(); ui(); generate(); } }, `${v.icon} ${v.name}`));
+  $('#max').value = S.max; $('#maxL').textContent = S.max;
+}
+$('#max').oninput = (e) => { S.max = +e.target.value; $('#maxL').textContent = S.max; save(); };
+$('#gen').onclick = generate;
+$('#seedWord').addEventListener('keydown', (e) => e.key === 'Enter' && generate());
+$('#copyAll').onclick = () => copy(current.join('\n'));
+addEventListener('keydown', (e) => { if (e.code === 'Space' && !SQ.isTyping(e)) { e.preventDefault(); generate(); } });
+ui(); renderFavs(); generate();
+</script>
+</body>
+</html>

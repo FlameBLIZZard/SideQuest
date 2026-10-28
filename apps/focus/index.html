@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nook · Sidequest</title>
+<link rel="stylesheet" href="../../shared/sq.css">
+<style>
+  :root { --accent: #f97362; --accent-ink: #210805; }
+  body.break { --accent: #4fc3a1; --accent-ink: #04170f; }
+  .timer-wrap { display: grid; place-items: center; gap: 18px; padding: 30px 16px; width: 100%; }
+  .ring { position: relative; width: min(340px, 80vw); aspect-ratio: 1; }
+  .ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .ring circle { fill: none; stroke-width: 10; }
+  .ring .bg { stroke: var(--line); }
+  .ring .fg { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset .4s linear, stroke .3s; }
+  .ring .center { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 4px; }
+  .time { font: 700 clamp(48px, 12vw, 76px)/1 var(--mono); letter-spacing: -2px; }
+  .phase { font-weight: 700; text-transform: uppercase; letter-spacing: .12em; font-size: 12px; color: var(--accent); }
+  .tabs { display: flex; gap: 6px; }
+  .big { font-size: 16px; padding: 12px 30px; border-radius: 999px; }
+  .task { width: min(360px, 90%); text-align: center; font-size: 15px; }
+  .sound { display: grid; grid-template-columns: 26px 1fr; gap: 8px; align-items: center; }
+  .heat { display: grid; grid-template-rows: repeat(7, 12px); grid-auto-flow: column; grid-auto-columns: 12px; gap: 3px; }
+  .heat i { border-radius: 3px; background: var(--panel-2); }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+  .stats b { display: block; font-size: 22px; }
+  .stats span { font-size: 11px; color: var(--mute); }
+  .dots { display: flex; gap: 6px; }
+  .dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--line); }
+  .dots i.done { background: var(--accent); }
+</style>
+</head>
+<body>
+<header class="sq-top">
+  <a class="home" href="../../index.html">← Sidequest</a>
+  <h1><span class="dot"></span>Nook</h1>
+  <span class="mute">focus timer + ambient sounds</span>
+  <div class="spacer"></div>
+  <div class="actions">
+    <button id="mini" class="primary" title="Pop out a tiny always-visible timer">Mini window</button>
+  </div>
+</header>
+<main class="sq-app">
+  <aside class="sq-side">
+    <section class="panel stack">
+      <h2>Ambience</h2>
+      <div id="sounds" class="stack"></div>
+      <p class="mute" style="margin:0;font-size:12px">All sounds are generated live. Mix as many as you like.</p>
+    </section>
+    <section class="panel stack">
+      <h2>Settings</h2>
+      <label class="field"><span>Focus <b id="focusL"></b></span><input type="range" id="focus" min="5" max="90" step="5"></label>
+      <label class="field"><span>Short break <b id="shortL"></b></span><input type="range" id="short" min="1" max="20"></label>
+      <label class="field"><span>Long break <b id="longL"></b></span><input type="range" id="long" min="5" max="45" step="5"></label>
+      <label class="check"><input type="checkbox" id="auto"> Auto-start next phase</label>
+      <label class="check"><input type="checkbox" id="notify"> Desktop notification</label>
+    </section>
+  </aside>
+  <div class="stack" style="align-content:start">
+    <section class="panel timer-wrap">
+      <div class="tabs" id="tabs"></div>
+      <div class="ring">
+        <svg viewBox="0 0 120 120"><circle class="bg" cx="60" cy="60" r="54"/><circle class="fg" id="arc" cx="60" cy="60" r="54" stroke-dasharray="339.3" stroke-dashoffset="0"/></svg>
+        <div class="center"><span class="phase" id="phase">Focus</span><span class="time" id="time">25:00</span><div class="dots" id="dots" style="justify-content:center"></div></div>
+      </div>
+      <input type="text" class="task" id="task" placeholder="What are you working on?">
+      <div class="row">
+        <button class="ghost" id="reset" data-smoke>Reset</button>
+        <button class="primary big" id="go">Start</button>
+        <button class="ghost" id="skip">Skip</button>
+      </div>
+      <div class="mute"><kbd>Space</kbd> start/pause · <kbd>R</kbd> reset · <kbd>S</kbd> skip</div>
+    </section>
+    <section class="panel">
+      <h2>Streak</h2>
+      <div class="stats" style="margin-bottom:14px">
+        <div><b id="streak">0</b><span>day streak</span></div>
+        <div><b id="today">0</b><span>sessions today</span></div>
+        <div><b id="hours">0</b><span>hours focused</span></div>
+      </div>
+      <div style="overflow-x:auto"><div class="heat" id="heat"></div></div>
+    </section>
+  </div>
+</main>
+
+<script src="../../shared/sq.js"></script>
+<script>
+const { $, el } = SQ;
+const cfg = Object.assign({ focus: 25, short: 5, long: 15, auto: false, notify: false, vols: {} }, SQ.store.get('nook', {}));
+let log = SQ.store.get('nook-log', {}); // { 'YYYY-MM-DD': { n, min } }
+const PHASES = { focus: 'Focus', short: 'Short break', long: 'Long break' };
+let phase = 'focus', round = 0, running = false, endAt = 0, remaining = cfg.focus * 60;
+
+// ---------- timer ----------
+const total = () => cfg[phase] * 60;
+function render() {
+  const t = running ? Math.max(0, (endAt - Date.now()) / 1000) : remaining;
+  const txt = SQ.fmtTime(Math.ceil(t));
+  $('#time').textContent = txt; $('#phase').textContent = PHASES[phase];
+  $('#arc').style.strokeDashoffset = 339.3 * (1 - t / total());
+  document.title = running ? `${txt} · ${PHASES[phase]}` : 'Nook · Sidequest';
+  $('#go').textContent = running ? 'Pause' : (t < total() ? 'Resume' : 'Start');
+  document.body.classList.toggle('break', phase !== 'focus');
+  $('#dots').innerHTML = ''; for (let i = 0; i < 4; i++) $('#dots').append(el('i', { class: i < round % 4 ? 'done' : '' }));
+  $('#tabs').innerHTML = '';
+  for (const [k, v] of Object.entries(PHASES)) $('#tabs').append(el('button', { class: phase === k ? 'on' : '', onclick: () => setPhase(k) }, v));
+  updateMini(txt);
+  if (running && t <= 0) finish();
+}
+function setPhase(p, autostart = false) { phase = p; running = false; remaining = total(); if (autostart) start(); render(); }
+function start() { endAt = Date.now() + remaining * 1000; running = true; ensureAudio(); }
+function pause() { remaining = Math.max(0, (endAt - Date.now()) / 1000); running = false; }
+function finish() {
+  running = false; chime();
+  if (phase === 'focus') {
+    round++;
+    const k = dayKey(new Date()); log[k] = log[k] || { n: 0, min: 0 }; log[k].n++; log[k].min += cfg.focus;
+    SQ.store.set('nook-log', log); renderStats();
+  }
+  const next = phase === 'focus' ? (round % 4 === 0 ? 'long' : 'short') : 'focus';
+  if (cfg.notify && 'Notification' in window && Notification.permission === 'granted')
+    new Notification(phase === 'focus' ? 'Focus done. Take a break.' : 'Break over. Back to it.', { body: $('#task').value || 'Nook' });
+  SQ.toast(phase === 'focus' ? 'Nice. Break time.' : 'Break over.');
+  setPhase(next, cfg.auto);
+}
+$('#go').onclick = () => { running ? pause() : start(); render(); };
+$('#reset').onclick = () => { running = false; remaining = total(); render(); };
+$('#skip').onclick = () => { running = true; endAt = Date.now(); render(); };
+setInterval(render, 250);
+addEventListener('keydown', (e) => {
+  if (SQ.isTyping(e)) return;
+  if (e.code === 'Space') { e.preventDefault(); $('#go').click(); }
+  if (e.key === 'r') $('#reset').click();
+  if (e.key === 's') $('#skip').click();
+});
+$('#task').value = SQ.store.get('nook-task', '');
+$('#task').oninput = (e) => SQ.store.set('nook-task', e.target.value);
+
+// ---------- settings ----------
+for (const k of ['focus', 'short', 'long']) {
+  $('#' + k).value = cfg[k]; $('#' + k + 'L').textContent = cfg[k] + ' min';
+  $('#' + k).oninput = (e) => { cfg[k] = +e.target.value; $('#' + k + 'L').textContent = cfg[k] + ' min'; if (!running && phase === k) remaining = total(); save(); render(); };
+}
+$('#auto').checked = cfg.auto; $('#auto').onchange = (e) => { cfg.auto = e.target.checked; save(); };
+$('#notify').checked = cfg.notify;
+$('#notify').onchange = async (e) => {
+  cfg.notify = e.target.checked;
+  if (cfg.notify && 'Notification' in window && Notification.permission !== 'granted') {
+    const p = await Notification.requestPermission(); if (p !== 'granted') { cfg.notify = false; e.target.checked = false; SQ.toast('Notifications are blocked'); }
+  }
+  save();
+};
+function save() { SQ.store.set('nook', cfg); }
+
+// ---------- streak ----------
+function dayKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function renderStats() {
+  const today = new Date(); let streak = 0;
+  for (let d = new Date(today); ; d.setDate(d.getDate() - 1)) {
+    const k = dayKey(d);
+    if (log[k] && log[k].n) streak++;
+    else if (k !== dayKey(today)) break; // today not done yet doesn't break the streak
+    if (streak > 3650) break;
+  }
+  $('#streak').textContent = streak;
+  $('#today').textContent = (log[dayKey(today)] || {}).n || 0;
+  $('#hours').textContent = (Object.values(log).reduce((a, v) => a + v.min, 0) / 60).toFixed(1);
+  const heat = $('#heat'); heat.innerHTML = '';
+  const start = new Date(today); start.setDate(start.getDate() - 7 * 17 - start.getDay());
+  for (let d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+    const n = (log[dayKey(d)] || {}).n || 0;
+    heat.append(el('i', { title: `${dayKey(d)}: ${n} session${n === 1 ? '' : 's'}`, style: n ? { background: `color-mix(in srgb, var(--accent) ${Math.min(100, 30 + n * 15)}%, transparent)` } : {} }));
+  }
+}
+
+// ---------- ambient sounds (all synthesized) ----------
+let ac, master;
+function ensureAudio() { if (ac) return ac.resume(); ac = new AudioContext(); master = ac.createGain(); master.connect(ac.destination); }
+function noiseBuffer(kind) {
+  const len = ac.sampleRate * 4, b = ac.createBuffer(2, len, ac.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = b.getChannelData(c); let last = 0, b0 = 0, b1 = 0, b2 = 0;
+    for (let i = 0; i < len; i++) {
+      const w = Math.random() * 2 - 1;
+      if (kind === 'brown') { last = (last + .02 * w) / 1.02; d[i] = last * 3.5; }
+      else if (kind === 'pink') { b0 = .99765 * b0 + w * .099; b1 = .963 * b1 + w * .2965; b2 = .57 * b2 + w * 1.0526; d[i] = (b0 + b1 + b2 + w * .1848) * .18; }
+      else d[i] = w;
+    }
+  }
+  return b;
+}
+const loopNoise = (kind, dest) => { const s = ac.createBufferSource(); s.buffer = noiseBuffer(kind); s.loop = true; s.connect(dest); s.start(); return s; };
+const filt = (type, f, q = .7) => { const n = ac.createBiquadFilter(); n.type = type; n.frequency.value = f; n.Q.value = q; return n; };
+const SOUNDS = {
+  rain: { icon: '🌧️', name: 'Rain', build(out) {
+    const f = filt('bandpass', 1400, .5); loopNoise('pink', f); f.connect(out);
+    const drops = setInterval(() => { // occasional heavier droplets
+      const t = ac.currentTime, o = ac.createBufferSource(), g = ac.createGain(), bp = filt('bandpass', 2500 + Math.random() * 3000, 8);
+      o.buffer = dropBuf || (dropBuf = noiseBuffer('white')); g.gain.setValueAtTime(.25, t); g.gain.exponentialRampToValueAtTime(.001, t + .05);
+      o.connect(bp).connect(g).connect(out); o.start(t, Math.random()); o.stop(t + .06);
+    }, 60);
+    return () => clearInterval(drops);
+  } },
+  brown: { icon: '🟤', name: 'Brown noise', build(out) { loopNoise('brown', out); } },
+  waves: { icon: '🌊', name: 'Ocean', build(out) {
+    const f = filt('lowpass', 900), g = ac.createGain(); g.gain.value = .4; loopNoise('pink', f); f.connect(g).connect(out);
+    const lfo = ac.createOscillator(), lg = ac.createGain(); lfo.frequency.value = .09; lg.gain.value = .38; lfo.connect(lg).connect(g.gain); lfo.start();
+    const lfo2 = ac.createOscillator(), lg2 = ac.createGain(); lfo2.frequency.value = .09; lg2.gain.value = 500; lfo2.connect(lg2).connect(f.frequency); lfo2.start();
+  } },
+  fire: { icon: '🔥', name: 'Fireplace', build(out) {
+    const f = filt('lowpass', 300), g = ac.createGain(); g.gain.value = .6; loopNoise('brown', f); f.connect(g).connect(out);
+    const pops = setInterval(() => {
+      if (Math.random() > .35) return;
+      const t = ac.currentTime, o = ac.createBufferSource(), pg = ac.createGain(), hp = filt('highpass', 1500 + Math.random() * 2500);
+      o.buffer = dropBuf || (dropBuf = noiseBuffer('white')); pg.gain.setValueAtTime(.2 + Math.random() * .6, t); pg.gain.exponentialRampToValueAtTime(.001, t + .02 + Math.random() * .05);
+      o.connect(hp).connect(pg).connect(out); o.start(t, Math.random()); o.stop(t + .1);
+    }, 50);
+    return () => clearInterval(pops);
+  } },
+  cafe: { icon: '☕', name: 'Café murmur', build(out) {
+    const f = filt('bandpass', 500, 1.2), g = ac.createGain(); g.gain.value = .9; loopNoise('pink', f); f.connect(g).connect(out);
+    const lfo = ac.createOscillator(), lg = ac.createGain(); lfo.frequency.value = 3.3; lg.gain.value = .25; lfo.connect(lg).connect(g.gain); lfo.start();
+    const clink = setInterval(() => {
+      if (Math.random() > .08) return;
+      const t = ac.currentTime, o = ac.createOscillator(), cg = ac.createGain(); o.frequency.value = 2400 + Math.random() * 1800;
+      cg.gain.setValueAtTime(.05, t); cg.gain.exponentialRampToValueAtTime(.0001, t + .4); o.connect(cg).connect(out); o.start(t); o.stop(t + .45);
+    }, 200);
+    return () => clearInterval(clink);
+  } },
+  birds: { icon: '🐦', name: 'Forest birds', build(out) {
+    const wind = filt('bandpass', 700, .4), wg = ac.createGain(); wg.gain.value = .15; loopNoise('pink', wind); wind.connect(wg).connect(out);
+    const chirps = setInterval(() => {
+      if (Math.random() > .25) return;
+      const t = ac.currentTime, base = 2500 + Math.random() * 2000, n = 1 + Math.floor(Math.random() * 4), pan = ac.createStereoPanner(); pan.pan.value = Math.random() * 2 - 1; pan.connect(out);
+      for (let i = 0; i < n; i++) {
+        const o = ac.createOscillator(), g = ac.createGain(), s = t + i * .13;
+        o.frequency.setValueAtTime(base, s); o.frequency.exponentialRampToValueAtTime(base * (1.3 + Math.random() * .5), s + .08);
+        g.gain.setValueAtTime(0, s); g.gain.linearRampToValueAtTime(.06, s + .01); g.gain.exponentialRampToValueAtTime(.0001, s + .1);
+        o.connect(g).connect(pan); o.start(s); o.stop(s + .12);
+      }
+    }, 400);
+    return () => clearInterval(chirps);
+  } },
+};
+let dropBuf = null;
+const active = {};
+function setVol(k, v) {
+  cfg.vols[k] = v; save();
+  if (v > 0 && !active[k]) {
+    ensureAudio();
+    const g = ac.createGain(); g.gain.value = 0; g.connect(master);
+    active[k] = { g, stop: SOUNDS[k].build(g) };
+  }
+  if (active[k]) active[k].g.gain.setTargetAtTime(v / 100 * .8, ac.currentTime, .3);
+  if (v === 0 && active[k]) { const a = active[k]; delete active[k]; setTimeout(() => { a.g.disconnect(); a.stop && a.stop(); }, 1200); }
+}
+for (const [k, s] of Object.entries(SOUNDS)) {
+  const r = el('input', { type: 'range', min: 0, max: 100, value: 0, 'aria-label': s.name, oninput: (e) => setVol(k, +e.target.value) });
+  $('#sounds').append(el('label', { class: 'sound', title: s.name }, el('span', { style: { fontSize: '18px' } }, s.icon), el('div', { class: 'field' }, el('span', {}, s.name), r)));
+}
+
+function chime() {
+  if (!ac) return;
+  const t = ac.currentTime;
+  [880, 1318.5, 1760].forEach((f, i) => {
+    const o = ac.createOscillator(), g = ac.createGain(); o.frequency.value = f; o.type = 'sine';
+    g.gain.setValueAtTime(0, t + i * .18); g.gain.linearRampToValueAtTime(.2, t + i * .18 + .01); g.gain.exponentialRampToValueAtTime(.0001, t + i * .18 + 1.6);
+    o.connect(g).connect(ac.destination); o.start(t + i * .18); o.stop(t + i * .18 + 1.7);
+  });
+}
+
+// ---------- mini window (Document PiP when available, else a small popup) ----------
+let miniWin = null;
+const MINI_CSS = `body{margin:0;font-family:system-ui,sans-serif;background:#141418;color:#eee;display:grid;place-items:center;height:100vh;user-select:none}
+.m{display:grid;gap:6px;text-align:center}.t{font:700 44px/1 ui-monospace,Consolas,monospace}.p{font-size:11px;letter-spacing:.12em;text-transform:uppercase;font-weight:700}
+button{font:600 12px system-ui;border:0;border-radius:99px;padding:6px 14px;cursor:pointer}`;
+async function openMini() {
+  if (miniWin && !miniWin.closed) { miniWin.focus(); return; }
+  try {
+    if ('documentPictureInPicture' in window) miniWin = await documentPictureInPicture.requestWindow({ width: 240, height: 150 });
+    else miniWin = open('', 'nook-mini', 'width=260,height=170,toolbar=0,menubar=0,location=0');
+  } catch { miniWin = null; }
+  if (!miniWin) return SQ.toast('Pop-ups are blocked');
+  const d = miniWin.document;
+  d.title = 'Nook';
+  d.head.innerHTML = `<style>${MINI_CSS}</style>`;
+  d.body.innerHTML = '<div class="m"><span class="p" id="p"></span><span class="t" id="t"></span><div><button id="b"></button></div></div>';
+  d.getElementById('b').onclick = () => $('#go').click();
+  render();
+}
+function updateMini(txt) {
+  if (!miniWin || miniWin.closed) return;
+  const d = miniWin.document, col = getComputedStyle(document.body).getPropertyValue('--accent');
+  const set = (id, v) => { const n = d.getElementById(id); if (n) n.textContent = v; };
+  set('t', txt); set('p', PHASES[phase]); set('b', running ? 'Pause' : 'Start');
+  const p = d.getElementById('p'), b = d.getElementById('b');
+  if (p) p.style.color = col; if (b) { b.style.background = col; }
+}
+$('#mini').onclick = openMini;
+
+renderStats(); render();
+</script>
+</body>
+</html>

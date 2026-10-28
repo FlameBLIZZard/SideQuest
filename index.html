@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sidequest</title>
+<meta name="description" content="Twelve tiny browser toys: pixel art, lo-fi beats, memes, wallpapers, ASCII webcam, focus timer, visualizer, fonts, soundboard, chat mockups, names and typing races.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>">
+<link rel="stylesheet" href="shared/sq.css">
+<style>
+  :root { --accent: #ff6b4a; }
+  .hero { max-width: 1100px; margin: 0 auto; padding: 56px 20px 24px; display: grid; gap: 14px; }
+  .hero .badge { display: inline-flex; gap: 8px; align-items: center; font: 600 12px var(--mono); color: var(--mute); border: 1px solid var(--line); border-radius: 99px; padding: 4px 10px; width: max-content; }
+  .hero h1 { font-size: clamp(40px, 7vw, 72px); letter-spacing: -.03em; font-weight: 800; }
+  .hero h1 span { background: linear-gradient(90deg, #ff5fa2, #f4b860, #a3e635, #34d399, #38bdf8, #c084fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero p { font-size: 18px; color: var(--mute); max-width: 620px; margin: 0; }
+  .tools { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+  .tools input { width: 260px; padding: 10px 14px; font-size: 15px; }
+  .grid { max-width: 1100px; margin: 0 auto; padding: 12px 20px 40px; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+  .card {
+    --c: #888; position: relative; display: grid; gap: 10px; align-content: start;
+    padding: 18px; border-radius: 16px; text-decoration: none; color: var(--ink);
+    background: var(--panel); border: 1px solid var(--line); transition: transform .15s, border-color .15s, box-shadow .15s;
+    animation: rise .4s ease both;
+  }
+  .card:hover { transform: translateY(-3px); border-color: var(--c); box-shadow: 0 10px 30px color-mix(in srgb, var(--c) 18%, transparent); }
+  .card .icon { width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center; font-size: 26px; background: color-mix(in srgb, var(--c) 22%, transparent); }
+  .card h2 { font-size: 18px; display: flex; align-items: baseline; gap: 8px; }
+  .card h2 small { font: 500 11px var(--mono); color: var(--mute); }
+  .card p { margin: 0; color: var(--mute); font-size: 13.5px; }
+  .card .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  .card .tags span { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: var(--panel-2); color: var(--mute); }
+  .card kbd { position: absolute; top: 16px; right: 16px; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+  footer { max-width: 1100px; margin: 0 auto; padding: 20px 20px 50px; color: var(--mute); font-size: 13px; display: flex; gap: 16px; flex-wrap: wrap; border-top: 1px solid var(--line); }
+  footer a { color: var(--ink); }
+  .theme { margin-left: auto; }
+</style>
+</head>
+<body>
+<section class="hero">
+  <span class="badge">🗺️ 12 apps · no install · no account · works offline</span>
+  <h1><span>Sidequest</span></h1>
+  <p>Twelve tiny browser toys for when you should be doing something else. Everything runs on your computer; nothing is uploaded anywhere.</p>
+  <div class="tools">
+    <input type="search" id="q" placeholder="Find a toy…  (press / )" aria-label="Search apps">
+    <button id="surprise">🎲 Surprise me</button>
+  </div>
+</section>
+<main class="grid" id="grid"></main>
+<footer>
+  <span>MIT licensed · made for fun</span>
+  <a href="https://github.com/FlameBLIZZard/sidequest">GitHub</a>
+  <a href="https://github.com/FlameBLIZZard/sidequest/issues">Report a bug</a>
+  <button class="theme ghost" id="theme">Toggle theme</button>
+</footer>
+
+<script src="shared/sq.js"></script>
+<script>
+const APPS = [
+  { slug: 'pixel', name: 'Pixie', icon: '👾', color: '#ff5fa2', desc: 'Draw sprites on a grid, animate them frame by frame, export a GIF or sprite sheet.', tags: ['art', 'animation'] },
+  { slug: 'lofi', name: 'Loft', icon: '🎧', color: '#f4b860', desc: 'Step-sequence drums and jazzy chords with vinyl crackle, then export the loop as WAV.', tags: ['music'] },
+  { slug: 'meme', name: 'Memeforge', icon: '🔥', color: '#a3e635', desc: 'Top and bottom text, caption bars, stickers and a deep-fry slider.', tags: ['images', 'memes'] },
+  { slug: 'wallpaper', name: 'Wallsmith', icon: '🌄', color: '#7c8cff', desc: 'Procedural wallpapers at your exact screen resolution: mesh, waves, low-poly, retro sun.', tags: ['art'] },
+  { slug: 'asciicam', name: 'ASCII Cam', icon: '📷', color: '#34d399', desc: 'Your webcam live as ASCII, Matrix rain, Game Boy pixels or halftone. Record clips.', tags: ['camera', 'video'] },
+  { slug: 'focus', name: 'Nook', icon: '🍅', color: '#f97362', desc: 'Pomodoro timer with rain, café and fire sounds, a streak heatmap and a mini window.', tags: ['focus'] },
+  { slug: 'visualizer', name: 'Pulse', icon: '🌀', color: '#c084fc', desc: 'Drop a song and get reactive visuals. Record them as a video, even vertical for reels.', tags: ['music', 'video'] },
+  { slug: 'fonts', name: 'Fontwall', icon: '🔤', color: '#38bdf8', desc: 'Type something and see it in every font on your PC, side by side.', tags: ['design'] },
+  { slug: 'soundboard', name: 'Boop', icon: '📢', color: '#fb7185', desc: 'Hotkey pads with built-in airhorns and rimshots. Load clips or record your mic.', tags: ['audio'] },
+  { slug: 'fakechat', name: 'Chatmock', icon: '💬', color: '#25d366', desc: 'Build messenger-style chat screenshots for skits, in three looks.', tags: ['images', 'memes'] },
+  { slug: 'names', name: 'Namewell', icon: '✨', color: '#fbbf24', desc: 'Random names for projects, characters, usernames, bands, towns and Wi-Fi.', tags: ['words'] },
+  { slug: 'typing', name: 'Keyrace', icon: '⌨️', color: '#2dd4bf', desc: 'Typing test with code mode, a ghost of your best run and a stats graph.', tags: ['games'] },
+];
+const { $, el } = SQ;
+const KEYS = '1234567890-='.split('');
+function render() {
+  const q = $('#q').value.trim().toLowerCase(), g = $('#grid'); g.innerHTML = '';
+  APPS.filter((a) => !q || (a.name + a.desc + a.tags.join(' ')).toLowerCase().includes(q)).forEach((a, i) => {
+    g.append(el('a', { class: 'card', href: `apps/${a.slug}/index.html`, style: { '--c': a.color, animationDelay: i * 30 + 'ms' } },
+      el('div', { class: 'icon' }, a.icon),
+      el('h2', {}, a.name),
+      el('p', {}, a.desc),
+      el('div', { class: 'tags' }, a.tags.map((t) => el('span', {}, t))),
+      q ? null : el('kbd', {}, KEYS[APPS.indexOf(a)])));
+  });
+}
+$('#q').oninput = render;
+$('#surprise').onclick = () => { location.href = `apps/${SQ.pick(APPS).slug}/index.html`; };
+addEventListener('keydown', (e) => {
+  if (e.key === '/' && document.activeElement !== $('#q')) { e.preventDefault(); $('#q').focus(); return; }
+  if (SQ.isTyping(e) || e.ctrlKey || e.metaKey) return;
+  const i = KEYS.indexOf(e.key); if (i >= 0) location.href = `apps/${APPS[i].slug}/index.html`;
+});
+const applyTheme = (t) => { if (t) document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme; };
+applyTheme(SQ.store.get('theme', ''));
+$('#theme').onclick = () => {
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches, cur = document.documentElement.dataset.theme || (dark ? 'dark' : 'light');
+  const next = cur === 'dark' ? 'light' : 'dark'; applyTheme(next); SQ.store.set('theme', next);
+};
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chatmock · Sidequest</title>
+<link rel="stylesheet" href="../../shared/sq.css">
+<style>
+  :root { --accent: #25d366; --accent-ink: #03170a; }
+  .sq-app { grid-template-columns: 360px 1fr; }
+  @media (min-width: 821px) { .sq-stage { position: sticky; top: 69px; height: calc(100vh - 84px); overflow: auto; place-items: start center; padding: 20px 0; } }
+  #cv { width: 400px; max-width: calc(100% - 24px); border-radius: 18px; box-shadow: 0 12px 40px #0006; }
+  .styles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .person { display: grid; grid-template-columns: 34px 1fr 34px 30px; gap: 6px; align-items: center; }
+  .person input[type=text]:first-child { text-align: center; padding: 7px 0; }
+  .msgs { display: grid; gap: 6px; max-height: 360px; overflow-y: auto; padding-right: 4px; }
+  .msg { display: grid; grid-template-columns: 90px 1fr; gap: 6px; padding: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+  .msg textarea { min-height: 34px; height: 34px; resize: vertical; grid-column: 1 / -1; font-size: 13px; }
+  .msg .tools { display: flex; gap: 4px; justify-content: flex-end; }
+  .msg .tools button { padding: 3px 7px; font-size: 11px; }
+  .msg select, .msg input { font-size: 12px; padding: 4px 6px; }
+  .composer { display: grid; grid-template-columns: auto 1fr auto; gap: 6px; }
+</style>
+</head>
+<body>
+<header class="sq-top">
+  <a class="home" href="../../index.html">← Sidequest</a>
+  <h1><span class="dot"></span>Chatmock</h1>
+  <span class="mute">chat screenshots for skits</span>
+  <div class="spacer"></div>
+  <div class="actions">
+    <button id="reset">New chat</button>
+    <button id="copy">Copy</button>
+    <button id="save" class="primary">Save PNG</button>
+  </div>
+</header>
+<main class="sq-app">
+  <aside class="sq-side">
+    <section class="panel stack">
+      <h2>Style</h2>
+      <div class="styles" id="styles"></div>
+      <label class="field"><span id="titleLbl">Chat name</span><input type="text" id="title"></label>
+      <label class="field"><span>Subtitle</span><input type="text" id="subtitle"></label>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="showTimes"> Times</label>
+        <label class="check"><input type="checkbox" id="ticks"> Read ticks</label>
+        <label class="check"><input type="checkbox" id="mark"> Small "skit" label</label>
+      </div>
+    </section>
+    <section class="panel stack">
+      <h2>People</h2>
+      <div id="people" class="stack"></div>
+      <button id="addPerson" data-smoke>+ Person</button>
+    </section>
+    <section class="panel stack">
+      <h2>Messages</h2>
+      <div class="composer">
+        <select id="as" title="Send as"></select>
+        <input type="text" id="draft" placeholder="Type and press Enter">
+        <button id="send" class="primary" data-smoke>Send</button>
+      </div>
+      <p class="mute" style="margin:0;font-size:12px"><kbd>Tab</kbd> in the box switches sender. Start a line with <kbd>--</kbd> for a center note.</p>
+      <div class="msgs" id="msgs"></div>
+    </section>
+  </aside>
+  <div class="sq-stage"><canvas id="cv"></canvas></div>
+</main>
+
+<script src="../../shared/sq.js"></script>
+<script>
+const { $, el } = SQ;
+const STYLES = { green: 'Green', gamer: 'Gamer', bubbles: 'Bubbles' };
+const starter = () => ({
+  style: 'green', title: 'Group project 💀', subtitle: 'Sam, Priya, You', showTimes: true, ticks: true, mark: false,
+  people: [{ name: 'You', avatar: '😎', color: '#25d366' }, { name: 'Sam', avatar: '🦊', color: '#e8505b' }, { name: 'Priya', avatar: '🐸', color: '#5b8def' }],
+  msgs: [
+    { from: 0, text: '-- Today', time: '' },
+    { from: 1, text: 'guys the presentation is tomorrow right', time: '21:02' },
+    { from: 2, text: 'it was today', time: '21:03' },
+    { from: 1, text: 'WHAT', time: '21:03' },
+    { from: 0, text: 'i did my slides 😌', time: '21:04' },
+    { from: 2, text: 'you made one slide that says "thank you"', time: '21:04' },
+  ],
+});
+let S = SQ.store.get('chatmock', null) || starter();
+let asWho = 0;
+const cv = $('#cv'), c = cv.getContext('2d');
+const DPR = 2, W = 400;
+
+// ---------- layout helpers ----------
+const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Segoe UI Emoji", "Apple Color Emoji", sans-serif';
+function wrapText(text, maxW, font) {
+  c.font = font; const out = [];
+  for (const para of text.split('\n')) {
+    let line = '';
+    for (const word of para.split(' ')) {
+      const t = line ? line + ' ' + word : word;
+      if (c.measureText(t).width > maxW && line) { out.push(line); line = word; }
+      else if (c.measureText(word).width > maxW) { // break very long words
+        let chunk = line ? line + ' ' : '';
+        for (const ch of word) { if (c.measureText(chunk + ch).width > maxW) { out.push(chunk); chunk = ''; } chunk += ch; }
+        line = chunk;
+      } else line = t;
+    }
+    out.push(line);
+  }
+  return out;
+}
+function rr(x, y, w, h, r) { c.beginPath(); c.roundRect(x, y, w, h, r); }
+function avatar(p, x, y, r) {
+  c.fillStyle = p.color; c.beginPath(); c.arc(x + r, y + r, r, 0, 7); c.fill();
+  c.font = `${r * 1.15}px ${FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = '#fff';
+  c.fillText(p.avatar || p.name[0] || '?', x + r, y + r * 1.08); c.textAlign = 'left'; c.textBaseline = 'alphabetic';
+}
+function statusBar(fg, bg) {
+  c.fillStyle = bg; c.fillRect(0, 0, W, 26);
+  c.fillStyle = fg; c.font = `600 13px ${FONT}`; c.fillText('9:41', 18, 18);
+  c.fillRect(W - 46, 9, 22, 10); c.fillRect(W - 23, 12, 2, 4); // battery
+  for (let i = 0; i < 4; i++) c.fillRect(W - 80 + i * 5, 18 - i * 3 - 3, 3, i * 3 + 3); // signal
+}
+const isNote = (m) => m.text.startsWith('--');
+
+// ---------- renderers return total height; called twice (measure, then draw) ----------
+const R = {
+  green(draw) {
+    let y = 0;
+    if (draw) { statusBar('#fff', '#008069'); c.fillStyle = '#008069'; c.fillRect(0, 26, W, 58); c.fillStyle = '#fff'; c.font = `22px ${FONT}`; c.fillText('‹', 10, 63);
+      avatar(S.people[1] || S.people[0], 30, 36, 19); c.fillStyle = '#fff'; c.font = `600 16px ${FONT}`; c.fillText(S.title, 78, 52); c.font = `12.5px ${FONT}`; c.fillStyle = '#d6f2ea'; c.fillText(S.subtitle, 78, 70);
+      c.font = `18px ${FONT}`; c.fillText('📞  ⋮', W - 66, 61); }
+    y = 96;
+    const group = S.people.length > 2, font = `14.5px ${FONT}`;
+    S.msgs.forEach((m, i) => {
+      if (isNote(m)) { const t = m.text.replace(/^--\s*/, ''); c.font = `600 12px ${FONT}`; const w = c.measureText(t).width + 20;
+        if (draw) { c.fillStyle = '#ffffffdd'; rr(W / 2 - w / 2, y, w, 24, 8); c.fill(); c.fillStyle = '#54656f'; c.textAlign = 'center'; c.fillText(t, W / 2, y + 16); c.textAlign = 'left'; }
+        y += 34; return; }
+      const me = m.from === 0, p = S.people[m.from] || S.people[0], prev = S.msgs[i - 1];
+      const first = !prev || prev.from !== m.from || isNote(prev);
+      const showName = group && !me && first;
+      const lines = wrapText(m.text, W * .72 - 20, font);
+      c.font = font; const tw = Math.max(...lines.map((l) => c.measureText(l).width));
+      const meta = S.showTimes ? (m.time || '') + (me && S.ticks ? ' ✓✓' : '') : '';
+      c.font = `11px ${FONT}`; const mw = meta ? c.measureText(meta).width + 8 : 0;
+      c.font = `600 12.5px ${FONT}`; const nw = showName ? c.measureText(p.name).width : 0;
+      const lastW = (c.font = font, c.measureText(lines[lines.length - 1]).width);
+      const extraLine = meta && lastW + mw > W * .72 - 20;
+      const bw = Math.max(tw + (extraLine ? 0 : mw), nw, mw) + 18, bh = lines.length * 19 + 12 + (showName ? 17 : 0) + (extraLine ? 14 : 0);
+      if (first) y += 4;
+      const x = me ? W - bw - 12 : 12;
+      if (draw) {
+        c.fillStyle = me ? '#d9fdd3' : '#ffffff'; c.shadowColor = '#0000001a'; c.shadowOffsetY = 1; c.shadowBlur = 1; rr(x, y, bw, bh, 8); c.fill(); c.shadowColor = 'transparent';
+        if (first) { c.beginPath(); if (me) { c.moveTo(x + bw - 4, y); c.lineTo(x + bw + 8, y); c.lineTo(x + bw - 4, y + 12); } else { c.moveTo(x + 4, y); c.lineTo(x - 8, y); c.lineTo(x + 4, y + 12); } c.fill(); }
+        let ty = y + 20;
+        if (showName) { c.font = `600 12.5px ${FONT}`; c.fillStyle = p.color; c.fillText(p.name, x + 9, ty - 2); ty += 17; }
+        c.font = font; c.fillStyle = '#111b21'; lines.forEach((l, k) => c.fillText(l, x + 9, ty + k * 19));
+        if (meta) { c.font = `11px ${FONT}`; c.fillStyle = '#667781'; const tx = x + bw - mw - 1; c.fillText(m.time || '', tx, y + bh - 7); if (me && S.ticks) { c.fillStyle = '#53bdeb'; c.fillText('✓✓', tx + c.measureText((m.time || '') + ' ').width, y + bh - 7); } }
+      }
+      y += bh + 3;
+    });
+    y += 12;
+    if (draw) { c.fillStyle = '#fff'; rr(8, y, W - 64, 44, 22); c.fill(); c.fillStyle = '#8696a0'; c.font = `15px ${FONT}`; c.fillText('😊  Message', 22, y + 27);
+      c.fillStyle = '#00a884'; c.beginPath(); c.arc(W - 30, y + 22, 22, 0, 7); c.fill(); c.fillStyle = '#fff'; c.textAlign = 'center'; c.fillText('🎤', W - 30, y + 28); c.textAlign = 'left'; }
+    return y + 58;
+  },
+  gamer(draw) {
+    if (draw) { c.fillStyle = '#313338'; c.fillRect(0, 0, W, 50); c.fillStyle = '#80848e'; c.font = `600 20px ${FONT}`; c.fillText('#', 16, 32); c.fillStyle = '#f2f3f5'; c.font = `600 15px ${FONT}`; c.fillText(S.title.replace(/^#\s*/, ''), 36, 31);
+      c.fillStyle = '#1f2023'; c.fillRect(0, 49, W, 1); }
+    let y = 62; const font = `14.5px ${FONT}`;
+    S.msgs.forEach((m, i) => {
+      if (isNote(m)) { const t = m.text.replace(/^--\s*/, ''); if (draw) { c.fillStyle = '#3f4147'; c.fillRect(16, y + 8, W - 32, 1); c.font = `600 11px ${FONT}`; const w = c.measureText(t).width + 12; c.fillStyle = '#313338'; c.fillRect(W / 2 - w / 2, y, w, 16); c.fillStyle = '#949ba4'; c.textAlign = 'center'; c.fillText(t, W / 2, y + 12); c.textAlign = 'left'; } y += 28; return; }
+      const p = S.people[m.from] || S.people[0], prev = S.msgs[i - 1], first = !prev || prev.from !== m.from || isNote(prev);
+      const lines = wrapText(m.text, W - 88, font);
+      if (first) { y += 10;
+        if (draw) { avatar(p, 16, y, 19); c.font = `600 15px ${FONT}`; c.fillStyle = p.color; c.fillText(p.name, 70, y + 14);
+          if (S.showTimes) { const nw = c.measureText(p.name).width; c.font = `11.5px ${FONT}`; c.fillStyle = '#949ba4'; c.fillText(`Today at ${m.time || '9:41 PM'}`, 78 + nw, y + 14); } }
+        y += 20; }
+      if (draw) { c.font = font; c.fillStyle = '#dbdee1'; lines.forEach((l, k) => c.fillText(l, 70, y + 16 + k * 20)); }
+      y += lines.length * 20 + 2;
+    });
+    y += 16;
+    if (draw) { c.fillStyle = '#383a40'; rr(14, y, W - 28, 44, 8); c.fill(); c.fillStyle = '#b5bac1'; c.font = `20px ${FONT}`; c.fillText('⊕', 26, y + 29); c.font = `14.5px ${FONT}`; c.fillStyle = '#6d6f78'; c.fillText(`Message #${S.title.replace(/^#\s*/, '')}`, 58, y + 27); }
+    return y + 60;
+  },
+  bubbles(draw) {
+    if (draw) { statusBar('#000', '#f6f6f6'); c.fillStyle = '#f6f6f6'; c.fillRect(0, 26, W, 84); c.fillStyle = '#d1d1d6'; c.fillRect(0, 110, W, 1);
+      c.fillStyle = '#0b84fe'; c.font = `28px ${FONT}`; c.fillText('‹', 14, 70);
+      avatar(S.people[1] || S.people[0], W / 2 - 24, 32, 24); c.fillStyle = '#000'; c.font = `12px ${FONT}`; c.textAlign = 'center'; c.fillText(S.title + ' ›', W / 2, 98); c.textAlign = 'left'; }
+    let y = 124; const font = `15.5px ${FONT}`;
+    let lastMe = -1; S.msgs.forEach((m, i) => { if (m.from === 0 && !isNote(m)) lastMe = i; });
+    S.msgs.forEach((m, i) => {
+      if (isNote(m)) { const t = m.text.replace(/^--\s*/, ''); if (draw) { c.font = `600 11.5px ${FONT}`; c.fillStyle = '#8e8e93'; c.textAlign = 'center'; c.fillText(t + (S.showTimes && m.time ? ' ' + m.time : ''), W / 2, y + 14); c.textAlign = 'left'; } y += 28; return; }
+      const me = m.from === 0, p = S.people[m.from] || S.people[0], prev = S.msgs[i - 1], next = S.msgs[i + 1];
+      const first = !prev || prev.from !== m.from || isNote(prev), last = !next || next.from !== m.from || isNote(next);
+      const group = S.people.length > 2;
+      if (first) y += 6;
+      if (first && group && !me) { if (draw) { c.font = `11px ${FONT}`; c.fillStyle = '#8e8e93'; c.fillText(p.name, 56, y + 10); } y += 14; }
+      const lines = wrapText(m.text, W * .66, font); c.font = font;
+      const bw = Math.max(...lines.map((l) => c.measureText(l).width)) + 26, bh = lines.length * 20 + 16;
+      const x = me ? W - bw - 14 : (group ? 50 : 14);
+      if (draw) {
+        c.fillStyle = me ? '#0b84fe' : '#e9e9eb'; rr(x, y, bw, bh, 18); c.fill();
+        if (last) { c.beginPath(); if (me) { c.moveTo(x + bw - 14, y + bh - 16); c.quadraticCurveTo(x + bw, y + bh, x + bw + 6, y + bh); c.quadraticCurveTo(x + bw - 8, y + bh, x + bw - 18, y + bh - 4); } else { c.moveTo(x + 14, y + bh - 16); c.quadraticCurveTo(x, y + bh, x - 6, y + bh); c.quadraticCurveTo(x + 8, y + bh, x + 18, y + bh - 4); } c.fill(); }
+        if (last && group && !me) avatar(p, 14, y + bh - 28, 14);
+        c.fillStyle = me ? '#fff' : '#000'; lines.forEach((l, k) => c.fillText(l, x + 13, y + 22 + k * 20));
+      }
+      y += bh + (last ? 4 : 2);
+      if (i === lastMe && S.ticks) { if (draw) { c.font = `600 11px ${FONT}`; c.fillStyle = '#8e8e93'; c.textAlign = 'right'; c.fillText(S.showTimes ? `Read ${m.time || ''}` : 'Delivered', W - 16, y + 10); c.textAlign = 'left'; } y += 16; }
+    });
+    y += 14;
+    if (draw) { c.fillStyle = '#c7c7cc'; c.beginPath(); c.arc(28, y + 18, 15, 0, 7); c.fill(); c.fillStyle = '#fff'; c.font = `22px ${FONT}`; c.textAlign = 'center'; c.fillText('+', 28, y + 26); c.textAlign = 'left';
+      c.strokeStyle = '#c7c7cc'; c.lineWidth = 1; rr(52, y + 2, W - 66, 34, 17); c.stroke(); c.fillStyle = '#c7c7cc'; c.font = `15px ${FONT}`; c.fillText('Message', 66, y + 24); }
+    return y + 50;
+  },
+};
+const BG = { green: '#efeae2', gamer: '#313338', bubbles: '#ffffff' };
+function render() {
+  const h = R[S.style](false);
+  cv.width = W * DPR; cv.height = h * DPR; c.setTransform(DPR, 0, 0, DPR, 0, 0);
+  c.fillStyle = BG[S.style]; c.fillRect(0, 0, W, h);
+  if (S.style === 'green') { const r = SQ.rng('doodle'); c.fillStyle = '#00000008'; for (let i = 0; i < h / 3; i++) { c.beginPath(); c.arc(r() * W, r() * h, 2 + r() * 6, 0, 7); c.fill(); } }
+  R[S.style](true);
+  if (S.mark) { c.font = `600 10px ${FONT}`; c.fillStyle = S.style === 'gamer' ? '#ffffff55' : '#00000044'; c.textAlign = 'right'; c.fillText('skit · not real', W - 10, h - 6); c.textAlign = 'left'; }
+  SQ.store.set('chatmock', S);
+}
+
+// ---------- editor ----------
+function ui() {
+  $('#styles').innerHTML = '';
+  for (const [k, v] of Object.entries(STYLES)) $('#styles').append(el('button', { class: S.style === k ? 'on' : '', onclick: () => { S.style = k; ui(); } }, v));
+  $('#title').value = S.title; $('#subtitle').value = S.subtitle; $('#titleLbl').textContent = S.style === 'gamer' ? 'Channel name' : 'Chat name';
+  $('#subtitle').closest('label').hidden = S.style !== 'green';
+  $('#showTimes').checked = S.showTimes; $('#ticks').checked = S.ticks; $('#mark').checked = S.mark;
+  const pp = $('#people'); pp.innerHTML = '';
+  S.people.forEach((p, i) => pp.append(el('div', { class: 'person' },
+    el('input', { type: 'text', value: p.avatar, maxlength: 4, title: 'Avatar: emoji or letter', oninput: (e) => { p.avatar = e.target.value; render(); } }),
+    el('input', { type: 'text', value: p.name, placeholder: i === 0 ? 'You' : 'Name', oninput: (e) => { p.name = e.target.value; render(); buildMsgs(); buildAs(); } }),
+    el('input', { type: 'color', value: p.color, oninput: (e) => { p.color = e.target.value; render(); } }),
+    i === 0 ? el('span', { class: 'mute', style: { fontSize: '11px' } }, 'me') : el('button', { class: 'ghost icon', title: 'Remove', onclick: () => { S.people.splice(i, 1); S.msgs = S.msgs.filter((m) => m.from !== i).map((m) => ({ ...m, from: m.from > i ? m.from - 1 : m.from })); ui(); } }, '×'))));
+  buildAs(); buildMsgs(); render();
+}
+function buildAs() { const a = $('#as'); a.innerHTML = ''; S.people.forEach((p, i) => a.append(el('option', { value: i, selected: i === asWho }, p.name || 'Person ' + (i + 1)))); }
+function buildMsgs() {
+  const box = $('#msgs'); box.innerHTML = '';
+  S.msgs.forEach((m, i) => {
+    const who = el('select', { onchange: (e) => { m.from = +e.target.value; render(); } }, S.people.map((p, k) => el('option', { value: k, selected: k === m.from }, p.name || 'Person ' + (k + 1))));
+    box.append(el('div', { class: 'msg' }, who,
+      el('div', { class: 'tools' },
+        el('input', { type: 'text', value: m.time, placeholder: 'time', style: { width: '64px' }, oninput: (e) => { m.time = e.target.value; render(); } }),
+        el('button', { title: 'Move up', onclick: () => { if (i) { [S.msgs[i - 1], S.msgs[i]] = [S.msgs[i], S.msgs[i - 1]]; buildMsgs(); render(); } } }, '↑'),
+        el('button', { title: 'Delete', onclick: () => { S.msgs.splice(i, 1); buildMsgs(); render(); } }, '×')),
+      el('textarea', { oninput: (e) => { m.text = e.target.value; render(); } }, m.text)));
+  });
+  box.scrollTop = box.scrollHeight;
+}
+function nextTime() {
+  const last = [...S.msgs].reverse().find((m) => /^\d{1,2}:\d{2}/.test(m.time));
+  if (!last) return '9:41';
+  const [h, mm] = last.time.split(':').map((x) => parseInt(x, 10)); const t = h * 60 + mm + (Math.random() < .6 ? 0 : 1);
+  return `${Math.floor(t / 60) % 24}:${String(t % 60).padStart(2, '0')}`;
+}
+function send() {
+  const t = $('#draft').value.trim(); if (!t) return;
+  S.msgs.push({ from: asWho, text: t, time: t.startsWith('--') ? '' : nextTime() }); $('#draft').value = '';
+  buildMsgs(); render();
+}
+$('#send').onclick = () => { if (!$('#draft').value.trim()) $('#draft').value = SQ.pick(['lol', 'no way 😭', 'bro', 'who asked', 'brb', 'ok but hear me out']); send(); };
+$('#draft').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); send(); }
+  if (e.key === 'Tab') { e.preventDefault(); asWho = (asWho + 1) % S.people.length; buildAs(); }
+});
+$('#as').onchange = (e) => { asWho = +e.target.value; };
+$('#title').oninput = (e) => { S.title = e.target.value; render(); };
+$('#subtitle').oninput = (e) => { S.subtitle = e.target.value; render(); };
+$('#showTimes').onchange = (e) => { S.showTimes = e.target.checked; render(); };
+$('#ticks').onchange = (e) => { S.ticks = e.target.checked; render(); };
+$('#mark').onchange = (e) => { S.mark = e.target.checked; render(); };
+const AV = ['🐼', '🐙', '🦄', '👽', '🤖', '🐱', '🍕', '🌵'], CO = ['#f59e0b', '#14b8a6', '#a855f7', '#ec4899', '#0ea5e9', '#84cc16'];
+$('#addPerson').onclick = () => { S.people.push({ name: 'Friend ' + S.people.length, avatar: SQ.pick(AV), color: SQ.pick(CO) }); ui(); };
+$('#reset').onclick = () => { if (confirm('Start over with the example chat?')) { S = starter(); ui(); } };
+$('#save').onclick = async () => SQ.download(await SQ.canvasBlob(cv), `chat-${SQ.stamp()}.png`);
+$('#copy').onclick = async () => { try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': await SQ.canvasBlob(cv) })]); SQ.toast('Copied'); } catch { SQ.toast('Copy is blocked here; use Save'); } };
+ui();
+</script>
+</body>
+</html>
