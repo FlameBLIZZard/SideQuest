@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ASCII Cam · Sidequest</title>
+<link rel="stylesheet" href="../../shared/sq.css">
+<style>
+  :root { --accent: #34d399; --accent-ink: #03140d; }
+  .sq-stage { background: #000; }
+  @media (min-width: 821px) { .sq-stage { position: sticky; top: 69px; height: calc(100vh - 84px); } }
+  #out { max-width: calc(100% - 24px); max-height: calc(100% - 24px); }
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .start { display: grid; gap: 12px; place-items: center; text-align: center; color: #ddd; padding: 20px; }
+  .start p { max-width: 340px; color: #999; margin: 0; }
+  .rec { display: inline-flex; gap: 8px; align-items: center; }
+</style>
+</head>
+<body>
+<header class="sq-top">
+  <a class="home" href="../../index.html">← Sidequest</a>
+  <h1><span class="dot"></span>ASCII Cam</h1>
+  <span class="mute">your webcam as text and pixels</span>
+  <div class="spacer"></div>
+  <div class="actions">
+    <button id="copyTxt">Copy text</button>
+    <button id="snap">Snapshot</button>
+    <button id="rec" class="primary"><span class="rec">Record</span></button>
+  </div>
+</header>
+<main class="sq-app">
+  <aside class="sq-side">
+    <section class="panel">
+      <h2>Mode</h2>
+      <div class="modes" id="modes"></div>
+    </section>
+    <section class="panel stack">
+      <h2>Look</h2>
+      <label class="field"><span>Resolution <b id="colsL"></b></span><input type="range" id="cols" min="30" max="220"></label>
+      <label class="field"><span>Contrast <b id="contrastL"></b></span><input type="range" id="contrast" min="50" max="250"></label>
+      <label class="field"><span>Brightness <b id="brightL"></b></span><input type="range" id="bright" min="-100" max="100"></label>
+      <label class="field"><span>Characters</span>
+        <select id="charset">
+          <option value=" .:-=+*#%@">Classic</option>
+          <option value=" ░▒▓█">Blocks</option>
+          <option value=" .'`^,:;Il!i><~+_-?][}{1)(|/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$">Detailed</option>
+          <option value=" ·•●">Dots</option>
+          <option value=" 01">Binary</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="mirror"> Mirror</label>
+      <label class="check"><input type="checkbox" id="invert"> Invert</label>
+    </section>
+    <section class="panel stack">
+      <h2>Source</h2>
+      <select id="camSel"><option value="">Default camera</option></select>
+      <button id="useFile">Use a video file instead</button>
+      <input type="file" id="fileIn" accept="video/*" hidden>
+    </section>
+  </aside>
+  <div class="sq-stage" id="stage">
+    <div class="start" id="start">
+      <div style="font-size:40px">▓▒░</div>
+      <button class="primary" id="startBtn" data-smoke>Turn on camera</button>
+      <p>Nothing leaves your computer. Frames are turned into text right here in the page.</p>
+    </div>
+    <canvas id="out" hidden></canvas>
+  </div>
+</main>
+<video id="vid" playsinline muted hidden></video>
+
+<script src="../../shared/sq.js"></script>
+<script>
+const { $, el } = SQ;
+const MODES = { ascii: 'ASCII', color: 'Color ASCII', matrix: 'Matrix', pixel: 'Pixel art', gameboy: 'Game Boy', halftone: 'Halftone' };
+const S = Object.assign({ mode: 'ascii', cols: 110, contrast: 130, bright: 0, charset: ' .:-=+*#%@', mirror: true, invert: false }, SQ.store.get('asciicam', {}));
+const vid = $('#vid'), out = $('#out'), octx = out.getContext('2d');
+const sample = el('canvas'), sctx = sample.getContext('2d', { willReadFrequently: true });
+let stream = null, lastText = '', recorder = null;
+
+function ui() {
+  $('#modes').innerHTML = '';
+  for (const [k, v] of Object.entries(MODES)) $('#modes').append(el('button', { class: S.mode === k ? 'on' : '', onclick: () => { S.mode = k; ui(); } }, v));
+  for (const k of ['cols', 'contrast', 'bright']) { $('#' + k).value = S[k]; $('#' + k + 'L').textContent = S[k]; }
+  $('#charset').value = S.charset; $('#mirror').checked = S.mirror; $('#invert').checked = S.invert;
+  SQ.store.set('asciicam', S);
+}
+for (const k of ['cols', 'contrast', 'bright']) $('#' + k).oninput = (e) => { S[k] = +e.target.value; ui(); };
+$('#charset').onchange = (e) => { S.charset = e.target.value; ui(); };
+$('#mirror').onchange = (e) => { S.mirror = e.target.checked; ui(); };
+$('#invert').onchange = (e) => { S.invert = e.target.checked; ui(); };
+
+async function startCam(deviceId) {
+  try {
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({ video: deviceId ? { deviceId: { exact: deviceId } } : { width: 1280, height: 720 }, audio: false });
+    vid.srcObject = stream; vid.src = ''; await vid.play();
+    showOut();
+    const cams = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+    $('#camSel').innerHTML = ''; cams.forEach((c, i) => $('#camSel').append(el('option', { value: c.deviceId, selected: c.deviceId === deviceId }, c.label || `Camera ${i + 1}`)));
+  } catch (err) {
+    SQ.toast('Camera blocked or missing. Try a video file.');
+    $('#start p').textContent = 'Could not open a camera (' + err.name + '). Allow camera access in the address bar, or use a video file.';
+  }
+}
+function showOut() { $('#start').hidden = true; out.hidden = false; }
+$('#startBtn').onclick = () => startCam();
+$('#camSel').onchange = (e) => startCam(e.target.value);
+$('#useFile').onclick = () => $('#fileIn').click();
+$('#fileIn').onchange = (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  vid.srcObject = null; vid.src = URL.createObjectURL(f); vid.loop = true; vid.play(); showOut();
+};
+
+const GB = [[15, 56, 15], [48, 98, 48], [139, 172, 15], [155, 188, 15]];
+const MATRIX = 'アイウエオカキクケコサシスセソタチツテトナニヌネノ0123456789';
+let matrixSeed = 0;
+function draw() {
+  requestAnimationFrame(draw);
+  if (out.hidden || vid.readyState < 2) return;
+  const vw = vid.videoWidth, vh = vid.videoHeight;
+  const cols = S.cols, cellW = 8, aspect = (S.mode === 'pixel' || S.mode === 'gameboy' || S.mode === 'halftone') ? 1 : 2;
+  const rows = Math.round(cols * vh / vw / aspect);
+  sample.width = cols; sample.height = rows;
+  sctx.save();
+  if (S.mirror) { sctx.translate(cols, 0); sctx.scale(-1, 1); }
+  sctx.filter = `contrast(${S.contrast}%) brightness(${100 + S.bright}%)`;
+  sctx.drawImage(vid, 0, 0, cols, rows); sctx.restore();
+  const px = sctx.getImageData(0, 0, cols, rows).data;
+  const W = cols * cellW, H = rows * cellW * aspect;
+  if (out.width !== W || out.height !== H) { out.width = W; out.height = H; }
+  octx.fillStyle = S.mode === 'gameboy' ? '#0f380f' : '#000'; octx.fillRect(0, 0, W, H);
+  const lum = (i) => { const l = (px[i] * .299 + px[i + 1] * .587 + px[i + 2] * .114) / 255; return S.invert ? 1 - l : l; };
+  const cs = S.charset, lines = [];
+  if (S.mode === 'ascii' || S.mode === 'color' || S.mode === 'matrix') {
+    octx.font = `${cellW * aspect * 1.05}px ui-monospace, Consolas, monospace`; octx.textBaseline = 'top';
+    if (S.mode === 'matrix') matrixSeed++;
+    for (let y = 0; y < rows; y++) {
+      let line = '';
+      for (let x = 0; x < cols; x++) {
+        const i = (y * cols + x) * 4, l = lum(i);
+        const ch = S.mode === 'matrix' ? (l < .12 ? ' ' : MATRIX[(x * 7 + y * 13 + Math.floor(matrixSeed / 6) * (x % 3 + 1)) % MATRIX.length]) : cs[Math.min(cs.length - 1, Math.floor(l * cs.length))];
+        line += ch;
+        if (S.mode === 'color') { octx.fillStyle = `rgb(${px[i]},${px[i + 1]},${px[i + 2]})`; octx.fillText(ch, x * cellW, y * cellW * aspect); }
+        else if (S.mode === 'matrix') { octx.fillStyle = `hsl(140, 100%, ${15 + l * 60}%)`; octx.fillText(ch, x * cellW, y * cellW * aspect); }
+      }
+      lines.push(line);
+      if (S.mode === 'ascii') { octx.fillStyle = '#e8ffe8'; for (let x = 0; x < cols; x++) if (line[x] !== ' ') octx.fillText(line[x], x * cellW, y * cellW * aspect); }
+    }
+    lastText = lines.join('\n');
+  } else {
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+      const i = (y * cols + x) * 4, l = lum(i);
+      if (S.mode === 'pixel') { const q = (v) => Math.round(v / 51) * 51; octx.fillStyle = `rgb(${q(px[i])},${q(px[i + 1])},${q(px[i + 2])})`; octx.fillRect(x * cellW, y * cellW, cellW, cellW); }
+      else if (S.mode === 'gameboy') { const c = GB[Math.min(3, Math.floor(l * 4))]; octx.fillStyle = `rgb(${c})`; octx.fillRect(x * cellW, y * cellW, cellW, cellW); }
+      else { octx.fillStyle = '#f5f0e6'; octx.beginPath(); octx.arc(x * cellW + cellW / 2, y * cellW + cellW / 2, cellW * .55 * l, 0, 7); octx.fill(); }
+    }
+    lastText = '';
+  }
+}
+requestAnimationFrame(draw);
+
+$('#snap').onclick = async () => { if (out.hidden) return SQ.toast('Turn on the camera first'); SQ.download(await SQ.canvasBlob(out), `asciicam-${SQ.stamp()}.png`); };
+$('#copyTxt').onclick = async () => {
+  if (!lastText) return SQ.toast('Switch to an ASCII mode to copy text');
+  try { await navigator.clipboard.writeText(lastText); SQ.toast('ASCII copied'); } catch { SQ.download(lastText, `asciicam-${SQ.stamp()}.txt`); }
+};
+$('#rec').onclick = async () => {
+  if (out.hidden) return SQ.toast('Turn on the camera first');
+  if (recorder && recorder.recording) {
+    const blob = await recorder.stop(); SQ.download(blob, `asciicam-${SQ.stamp()}.${recorder.ext}`);
+    $('#rec').innerHTML = '<span class="rec">Record</span>'; return;
+  }
+  recorder = SQ.recorder(out, { fps: 30 }); recorder.start();
+  $('#rec').innerHTML = '<span class="rec"><span class="rec-dot"></span>Stop</span>';
+};
+ui();
+</script>
+</body>
+</html>

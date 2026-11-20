@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Memeforge · Sidequest</title>
+<link rel="stylesheet" href="../../shared/sq.css">
+<style>
+  :root { --accent: #a3e635; --accent-ink: #101a02; }
+  @media (min-width: 821px) { .sq-stage { position: sticky; top: 69px; height: calc(100vh - 84px); } }
+  #cv { max-width: calc(100% - 32px); max-height: calc(100% - 32px); box-shadow: 0 8px 40px #0007; touch-action: none; cursor: default; }
+  .stickers { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+  .stickers button { font-size: 20px; padding: 4px 0; background: transparent; border-color: transparent; }
+  .stickers button:hover { background: var(--panel-2); }
+  .drop-hint { position: absolute; inset: 0; display: none; place-items: center; background: color-mix(in srgb, var(--accent) 25%, transparent); font-size: 20px; font-weight: 800; border: 3px dashed var(--accent); border-radius: var(--radius); }
+  .sq-stage.dragover .drop-hint { display: grid; }
+  textarea { width: 100%; resize: vertical; min-height: 60px; font-weight: 600; }
+  .fry-lbl b { color: #ff7a1a; }
+</style>
+</head>
+<body>
+<header class="sq-top">
+  <a class="home" href="../../index.html">← Sidequest</a>
+  <h1><span class="dot"></span>Memeforge</h1>
+  <span class="mute">memes, captions, deep fry</span>
+  <div class="spacer"></div>
+  <div class="actions">
+    <button id="openImg">Open image</button>
+    <button id="copy">Copy</button>
+    <button id="saveJpg">Save JPG</button>
+    <button id="savePng" class="primary">Save PNG</button>
+  </div>
+</header>
+<input type="file" id="fileIn" accept="image/*" hidden>
+
+<main class="sq-app">
+  <aside class="sq-side">
+    <section class="panel stack">
+      <h2>Layout</h2>
+      <div class="row">
+        <button id="addText" data-smoke>+ Text</button>
+        <button id="classic" data-smoke>Top / bottom</button>
+        <button id="caption" data-smoke>Caption bar</button>
+      </div>
+      <label class="field"><span>Caption bar <b id="bandL">0%</b></span><input type="range" id="band" min="0" max="60" value="0"></label>
+    </section>
+    <section class="panel stack" id="layerPanel">
+      <h2>Selected layer</h2>
+      <p class="mute" id="noSel">Click a text or sticker on the canvas to edit it.</p>
+      <div class="stack" id="textCtl" hidden>
+        <textarea id="txt"></textarea>
+        <div class="row">
+          <select id="font">
+            <option value="Impact, 'Anton', 'Arial Black', sans-serif">Impact</option>
+            <option value="Arial, Helvetica, sans-serif">Arial</option>
+            <option value="'Arial Black', Arial, sans-serif">Arial Black</option>
+            <option value="'Comic Sans MS', 'Comic Neue', cursive">Comic Sans</option>
+            <option value="Georgia, serif">Georgia</option>
+            <option value="'Courier New', monospace">Courier</option>
+          </select>
+          <input type="color" id="fill" title="Text color">
+          <input type="color" id="stroke" title="Outline color">
+          <label class="check"><input type="checkbox" id="caps"> CAPS</label>
+        </div>
+        <label class="field"><span>Size</span><input type="range" id="size" min="2" max="20" step=".5"></label>
+        <label class="field"><span>Outline</span><input type="range" id="strokeW" min="0" max="20"></label>
+        <label class="field"><span>Box width</span><input type="range" id="boxW" min="20" max="100"></label>
+      </div>
+      <div class="stack" id="stickerCtl" hidden>
+        <label class="field"><span>Size</span><input type="range" id="stSize" min="4" max="60"></label>
+        <label class="field"><span>Rotation</span><input type="range" id="stRot" min="-180" max="180"></label>
+      </div>
+      <div class="row" id="layerBtns" hidden>
+        <button id="front">Bring to front</button>
+        <button id="del">Delete</button>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Stickers</h2>
+      <div class="stickers" id="stickers"></div>
+    </section>
+    <section class="panel stack">
+      <h2>Deep fry</h2>
+      <label class="field fry-lbl"><span>Crispiness <b id="fryL">0%</b></span><input type="range" id="fry" min="0" max="100" value="0"></label>
+      <label class="check"><input type="checkbox" id="flare"> Laser eyes / lens flare</label>
+    </section>
+  </aside>
+  <div class="sq-stage" id="stage">
+    <canvas id="cv"></canvas>
+    <div class="drop-hint">Drop image to load</div>
+  </div>
+</main>
+
+<script src="../../shared/sq.js"></script>
+<script>
+const { $, el } = SQ;
+const cv = $('#cv'), ctx = cv.getContext('2d');
+const STICKERS = '😂🤣😭💀🔥👌💯😎🤡🗿👀🙏😳🥺😤🤯✨💥❤️👍🤔😈🎉🍆🌚🐸🐐🧠🚀💸📈⚠️'.match(/\p{Extended_Pictographic}️?/gu);
+let base = null; // HTMLImageElement or ImageBitmap
+let W = 900, H = 900;
+let band = 0;
+let layers = [];
+let sel = null;
+
+function textLayer(text, y, opts = {}) {
+  return { type: 'text', text, x: .5, y, size: 9, font: "Impact, 'Anton', 'Arial Black', sans-serif", fill: '#ffffff', stroke: '#000000', strokeW: 8, caps: true, boxW: 94, ...opts };
+}
+function classic() { band = 0; $('#band').value = 0; layers = [textLayer('Top text', .1), textLayer('Bottom text', .9)]; select(null); render(); }
+function caption() {
+  band = 26; $('#band').value = band; $('#bandL').textContent = band + '%';
+  layers = [textLayer('when you finally fix the bug but have no idea how', .13, { font: 'Arial, Helvetica, sans-serif', fill: '#111111', strokeW: 0, caps: false, size: 5.5, align: 'left' })];
+  select(layers[0]); render();
+}
+
+// ---------- drawing ----------
+function wrap(c, text, maxW) {
+  const out = [];
+  for (const para of text.split('\n')) {
+    let line = '';
+    for (const word of para.split(/\s+/)) {
+      const test = line ? line + ' ' + word : word;
+      if (c.measureText(test).width > maxW && line) { out.push(line); line = word; } else line = test;
+    }
+    out.push(line);
+  }
+  return out;
+}
+function layerBox(c, L) {
+  if (L.type === 'sticker') { const s = L.size / 100 * W; return { x: L.x * W - s / 2, y: L.y * H - s / 2, w: s, h: s }; }
+  const px = L.size / 100 * W;
+  c.font = `900 ${px}px ${L.font}`;
+  const lines = wrap(c, L.caps ? L.text.toUpperCase() : L.text, L.boxW / 100 * W);
+  const w = Math.max(...lines.map((l) => c.measureText(l).width), px), h = lines.length * px * 1.08;
+  const y = Math.min(Math.max(L.y * H - h / 2, H * .015), H * .985 - h); // keep text on the canvas
+  return { x: L.x * W - (L.align === 'left' ? L.boxW / 200 * W : w / 2), y, w: L.align === 'left' ? L.boxW / 100 * W : w, h, lines, px };
+}
+function drawLayer(c, L) {
+  if (L.type === 'sticker') {
+    const s = L.size / 100 * W;
+    c.save(); c.translate(L.x * W, L.y * H); c.rotate(L.rot * Math.PI / 180);
+    c.font = `${s}px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif`; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(L.emoji, 0, s * .05); c.restore(); return;
+  }
+  const b = layerBox(c, L);
+  c.textAlign = L.align === 'left' ? 'left' : 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
+  b.lines.forEach((line, i) => {
+    const x = L.align === 'left' ? b.x : L.x * W, y = b.y + b.px * 1.08 * (i + .5);
+    if (L.strokeW) { c.lineWidth = L.strokeW / 100 * b.px * 2.2; c.strokeStyle = L.stroke; c.strokeText(line, x, y); }
+    c.fillStyle = L.fill; c.fillText(line, x, y);
+  });
+}
+function composite(target, withUi) {
+  const c = target.getContext('2d');
+  target.width = W; target.height = H;
+  const bandPx = Math.round(band / 100 * H);
+  c.fillStyle = '#ffffff'; c.fillRect(0, 0, W, H);
+  if (base) c.drawImage(base, 0, bandPx, W, H - bandPx);
+  else {
+    const g = c.createLinearGradient(0, bandPx, W, H); g.addColorStop(0, '#3b3b58'); g.addColorStop(1, '#1d1d2c');
+    c.fillStyle = g; c.fillRect(0, bandPx, W, H - bandPx);
+    c.fillStyle = '#ffffff55'; c.font = `700 ${W * .035}px system-ui`; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText('Drop, paste or open an image', W / 2, bandPx + (H - bandPx) / 2);
+  }
+  if ($('#flare').checked) drawFlares(c);
+  layers.forEach((L) => drawLayer(c, L));
+  if (withUi && sel) {
+    const b = layerBox(c, sel);
+    c.setLineDash([W / 120, W / 160]); c.lineWidth = Math.max(2, W / 400); c.strokeStyle = '#a3e635';
+    c.strokeRect(b.x - 6, b.y - 6, b.w + 12, b.h + 12); c.setLineDash([]);
+  }
+}
+function drawFlares(c) {
+  // Two red glowing "laser eye" flares at the upper third; drag-free but good enough for the bit.
+  [[.4, .38], [.6, .38]].forEach(([fx, fy]) => {
+    const x = fx * W, y = band / 100 * H + fy * (H - band / 100 * H), r = W * .22;
+    const g = c.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, '#ffffffee'); g.addColorStop(.08, '#ff2a2aee'); g.addColorStop(.4, '#ff000055'); g.addColorStop(1, '#ff000000');
+    c.globalCompositeOperation = 'lighter'; c.fillStyle = g; c.fillRect(x - r, y - r, r * 2, r * 2);
+    c.fillRect(x - r * 2.5, y - W * .006, r * 5, W * .012); c.globalCompositeOperation = 'source-over';
+  });
+}
+
+// Deep fry: saturate + contrast, noise, then crush through JPEG a few times.
+async function fry(src, amount) {
+  if (!amount) return src;
+  const f = amount / 100, out = el('canvas', { width: src.width, height: src.height }), c = out.getContext('2d');
+  c.filter = `saturate(${1 + f * 5}) contrast(${1 + f * 1.8}) brightness(${1 + f * .15})`;
+  c.drawImage(src, 0, 0); c.filter = 'none';
+  const img = c.getImageData(0, 0, out.width, out.height), d = img.data, n = f * 70;
+  for (let i = 0; i < d.length; i += 4) {
+    const k = (Math.random() - .5) * n;
+    d[i] = Math.min(255, d[i] + k + f * 30); d[i + 1] += k; d[i + 2] += k - f * 25;
+  }
+  c.putImageData(img, 0, 0);
+  if (f > .4) { // chunky resample for that "saved 40 times" look
+    const s = 1 - (f - .4) * 1.1, tmp = el('canvas', { width: Math.max(8, out.width * s), height: Math.max(8, out.height * s) });
+    tmp.getContext('2d').drawImage(out, 0, 0, tmp.width, tmp.height);
+    c.imageSmoothingEnabled = false; c.drawImage(tmp, 0, 0, out.width, out.height);
+  }
+  const passes = Math.round(1 + f * 6), q = Math.max(.03, .5 - f * .47);
+  for (let i = 0; i < passes; i++) {
+    const blob = await SQ.canvasBlob(out, 'image/jpeg', q);
+    c.drawImage(await createImageBitmap(blob), 0, 0);
+  }
+  return out;
+}
+
+const work = el('canvas');
+let fryToken = 0;
+async function render() {
+  const amount = +$('#fry').value;
+  if (!amount) { composite(cv, true); return; }
+  const token = ++fryToken;
+  composite(work, false);
+  const fried = await fry(work, amount);
+  if (token !== fryToken) return;
+  cv.width = W; cv.height = H; ctx.drawImage(fried, 0, 0);
+  if (sel) { const b = layerBox(ctx, sel); ctx.setLineDash([8, 6]); ctx.strokeStyle = '#a3e635'; ctx.lineWidth = 3; ctx.strokeRect(b.x - 6, b.y - 6, b.w + 12, b.h + 12); ctx.setLineDash([]); }
+}
+async function finalCanvas() { composite(work, false); return fry(work, +$('#fry').value); }
+
+// ---------- selection & editing ----------
+function select(L) {
+  sel = L;
+  $('#noSel').hidden = !!L; $('#layerBtns').hidden = !L;
+  $('#textCtl').hidden = !L || L.type !== 'text'; $('#stickerCtl').hidden = !L || L.type !== 'sticker';
+  if (L && L.type === 'text') {
+    $('#txt').value = L.text; $('#font').value = L.font; $('#fill').value = L.fill; $('#stroke').value = L.stroke;
+    $('#caps').checked = L.caps; $('#size').value = L.size; $('#strokeW').value = L.strokeW; $('#boxW').value = L.boxW;
+  }
+  if (L && L.type === 'sticker') { $('#stSize').value = L.size; $('#stRot').value = L.rot; }
+}
+const bindL = (id, key, num) => ($('#' + id).oninput = (e) => {
+  if (!sel) return; sel[key] = e.target.type === 'checkbox' ? e.target.checked : num ? +e.target.value : e.target.value; render();
+});
+bindL('txt', 'text'); bindL('font', 'font'); bindL('fill', 'fill'); bindL('stroke', 'stroke'); bindL('caps', 'caps');
+bindL('size', 'size', 1); bindL('strokeW', 'strokeW', 1); bindL('boxW', 'boxW', 1); bindL('stSize', 'size', 1); bindL('stRot', 'rot', 1);
+$('#font').onchange = $('#font').oninput;
+$('#del').onclick = () => { layers = layers.filter((l) => l !== sel); select(null); render(); };
+$('#front').onclick = () => { layers = layers.filter((l) => l !== sel).concat(sel); render(); };
+$('#addText').onclick = () => { const L = textLayer('New text', .5); layers.push(L); select(L); render(); $('#txt').select(); };
+$('#classic').onclick = classic;
+$('#caption').onclick = caption;
+$('#band').oninput = (e) => { band = +e.target.value; $('#bandL').textContent = band + '%'; render(); };
+let fryTimer;
+$('#fry').oninput = (e) => { $('#fryL').textContent = e.target.value + '%'; clearTimeout(fryTimer); fryTimer = setTimeout(render, 80); };
+$('#flare').onchange = render;
+STICKERS.forEach((s) => $('#stickers').append(el('button', { title: 'Add sticker', onclick: () => {
+  const L = { type: 'sticker', emoji: s, x: .3 + Math.random() * .4, y: .35 + Math.random() * .3, size: 18, rot: Math.round(Math.random() * 30 - 15) };
+  layers.push(L); select(L); render();
+} }, s)));
+
+// Drag layers on the canvas
+let drag = null;
+const toCanvas = (e) => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * W, (e.clientY - r.top) / r.height * H]; };
+cv.addEventListener('pointerdown', (e) => {
+  const [x, y] = toCanvas(e);
+  const hit = [...layers].reverse().find((L) => { const b = layerBox(ctx, L); return x >= b.x - 10 && x <= b.x + b.w + 10 && y >= b.y - 10 && y <= b.y + b.h + 10; });
+  select(hit || null); render();
+  if (hit) { cv.setPointerCapture(e.pointerId); drag = { L: hit, dx: x - hit.x * W, dy: y - hit.y * H }; }
+});
+cv.addEventListener('pointermove', (e) => {
+  const [x, y] = toCanvas(e);
+  if (!drag) { cv.style.cursor = layers.some((L) => { const b = layerBox(ctx, L); return x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h; }) ? 'move' : 'default'; return; }
+  drag.L.x = (x - drag.dx) / W; drag.L.y = (y - drag.dy) / H; render();
+});
+cv.addEventListener('pointerup', () => (drag = null));
+cv.addEventListener('dblclick', () => { if (sel && sel.type === 'text') { $('#txt').focus(); $('#txt').select(); } });
+addEventListener('keydown', (e) => {
+  if (SQ.isTyping(e)) return;
+  if ((e.key === 'Delete' || e.key === 'Backspace') && sel) $('#del').click();
+});
+
+// ---------- image loading ----------
+async function loadImage(blob) {
+  const img = await createImageBitmap(blob);
+  const max = 1400, s = Math.min(1, max / Math.max(img.width, img.height));
+  base = img; W = Math.round(img.width * s);
+  H = Math.round(img.height * s / (1 - band / 100));
+  render(); SQ.toast('Image loaded');
+}
+$('#openImg').onclick = () => $('#fileIn').click();
+$('#fileIn').onchange = (e) => e.target.files[0] && loadImage(e.target.files[0]);
+const stage = $('#stage');
+stage.addEventListener('dragover', (e) => { e.preventDefault(); stage.classList.add('dragover'); });
+stage.addEventListener('dragleave', () => stage.classList.remove('dragover'));
+stage.addEventListener('drop', (e) => { e.preventDefault(); stage.classList.remove('dragover'); const f = e.dataTransfer.files[0]; if (f && f.type.startsWith('image/')) loadImage(f); });
+addEventListener('paste', (e) => { const item = [...e.clipboardData.items].find((i) => i.type.startsWith('image/')); if (item) loadImage(item.getAsFile()); });
+
+// ---------- export ----------
+$('#savePng').onclick = async () => SQ.download(await SQ.canvasBlob(await finalCanvas()), `meme-${SQ.stamp()}.png`);
+$('#saveJpg').onclick = async () => SQ.download(await SQ.canvasBlob(await finalCanvas(), 'image/jpeg', .9), `meme-${SQ.stamp()}.jpg`);
+$('#copy').onclick = async () => {
+  try { const b = await SQ.canvasBlob(await finalCanvas()); await navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]); SQ.toast('Copied to clipboard'); }
+  catch { SQ.toast('Copy is blocked here; use Save instead'); }
+};
+
+classic();
+</script>
+</body>
+</html>
