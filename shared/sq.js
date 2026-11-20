@@ -24,8 +24,10 @@
   SQ.toast = (msg) => {
     let t = SQ.$('.sq-toast');
     if (!t) { t = SQ.el('div', { class: 'sq-toast', role: 'status' }); document.body.append(t); }
+    const again = t.classList.contains('show');
     t.textContent = msg;
     t.classList.add('show');
+    if (again) { t.classList.remove('bump'); void t.offsetWidth; t.classList.add('bump'); }
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
   };
@@ -156,6 +158,55 @@
   // Theme chosen on the launcher applies to every app.
   const theme = SQ.store.get('theme', '');
   if (theme) document.documentElement.dataset.theme = theme;
+
+  SQ.reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Replays the little pop on an element (a toggle that just switched on, a new item...).
+  SQ.pop = (node) => {
+    if (!node || SQ.reduceMotion()) return;
+    node.classList.remove('sq-pop'); void node.offsetWidth; node.classList.add('sq-pop');
+    node.addEventListener('animationend', () => node.classList.remove('sq-pop'), { once: true });
+  };
+
+  // Theme flips fade smoothly.
+  SQ.setTheme = (t) => {
+    const root = document.documentElement;
+    root.classList.add('sq-theme-fade');
+    if (t) root.dataset.theme = t; else delete root.dataset.theme;
+    setTimeout(() => root.classList.remove('sq-theme-fade'), 400);
+  };
+
+  // Any button that gains the "on" class pops, in every app, without touching app code.
+  const watchOn = () => {
+    if (!window.MutationObserver) return;
+    new MutationObserver((list) => {
+      for (const m of list) {
+        const n = m.target;
+        if (n.tagName === 'BUTTON' && n.classList.contains('on') && !(m.oldValue || '').split(/\s+/).includes('on')) SQ.pop(n);
+      }
+    }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+  };
+
+  // Leaving for another Sidequest page fades out first, so hops between apps feel connected.
+  const leaveOnLinks = () => {
+    document.addEventListener('click', (e) => {
+      const a = e.target.closest && e.target.closest('a[href]');
+      if (!a || e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || a.target || a.hasAttribute('download')) return;
+      const href = a.getAttribute('href');
+      if (!href || /^(https?:|mailto:|#|blob:|data:)/i.test(href)) return;
+      e.preventDefault();
+      SQ.go(a.href);
+    });
+  };
+  SQ.go = (url) => {
+    if (SQ.reduceMotion()) { location.href = url; return; }
+    document.body.classList.add('sq-leaving');
+    setTimeout(() => { location.href = url; }, 150);
+  };
+  // Coming back with the browser's back button restores the page from cache: undo the fade.
+  addEventListener('pageshow', () => document.body && document.body.classList.remove('sq-leaving'));
+  if (document.body) { watchOn(); leaveOnLinks(); }
+  else document.addEventListener('DOMContentLoaded', () => { watchOn(); leaveOnLinks(); });
 
   window.SQ = SQ;
 })();

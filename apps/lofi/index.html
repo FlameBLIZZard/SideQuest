@@ -15,6 +15,11 @@
   .step.beat { background: color-mix(in srgb, var(--panel-2) 80%, var(--ink) 8%); }
   .step.on { background: var(--accent); border-color: transparent; }
   .step.now { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .step { transition: background-color .15s, border-color .15s, transform .3s var(--spring), outline-color .1s; }
+  .step.on.now { animation: hit .28s var(--out); }
+  @keyframes hit { from { transform: scale(1.22); filter: brightness(1.35); } }
+  .chord { transition: border-color .2s, box-shadow .25s, transform .3s var(--spring); }
+  .chord.now { transform: translateY(-2px); }
   .chords { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
   .chord { display: grid; gap: 4px; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); }
   .chord.now { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }

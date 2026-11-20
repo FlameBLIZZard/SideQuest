@@ -12,7 +12,14 @@
   .results { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; padding: 16px; align-content: start; width: 100%; }
   .sq-stage { place-items: stretch; align-content: start; }
   .name { display: flex; align-items: center; gap: 8px; padding: 14px 14px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); font-size: 17px; font-weight: 700; cursor: pointer; animation: pop .25s ease both; text-align: left; justify-content: space-between; white-space: normal; }
-  .name:hover { border-color: var(--accent); }
+  .name:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .name { transition: border-color .15s, transform .3s var(--spring), background-color .2s; }
+  .name.copied { animation: copied .5s var(--spring) !important; }
+  @keyframes copied { 0% { background: color-mix(in srgb, var(--accent) 35%, var(--panel-2)); transform: scale(.96); } 60% { transform: scale(1.02); } }
+  .name .fav { transition: transform .35s var(--spring), color .2s; }
+  .name .fav:hover { transform: scale(1.25) rotate(-12deg); }
+  .name .fav.on { animation: star .5s var(--spring); }
+  @keyframes star { 0% { transform: scale(.4) rotate(-90deg); } 60% { transform: scale(1.4) rotate(15deg); } }
   .name small { display: block; font-size: 11px; font-weight: 500; color: var(--mute); margin-top: 2px; }
   .name .fav { background: none; border: 0; font-size: 18px; padding: 0 2px; color: var(--mute); }
   .name .fav.on { color: var(--accent); }
@@ -138,7 +145,7 @@ function generate() {
   if (!current.length) box.append(el('p', { class: 'mute' }, 'No names fit those filters. Loosen them a bit.'));
   current.forEach((n, i) => {
     const fav = S.favs.includes(n);
-    box.append(el('div', { class: 'name', style: { animationDelay: i * 18 + 'ms' }, title: 'Click to copy', onclick: () => copy(n) },
+    box.append(el('div', { class: 'name', style: { animationDelay: i * 18 + 'ms' }, title: 'Click to copy', onclick: (e) => { copy(n); e.currentTarget.style.animation = 'none'; e.currentTarget.classList.remove('copied'); void e.currentTarget.offsetWidth; e.currentTarget.classList.add('copied'); } },
       el('span', {}, n, el('small', {}, cat.note())),
       el('button', { class: 'fav' + (fav ? ' on' : ''), title: 'Save to favorites', onclick: (e) => { e.stopPropagation(); toggleFav(n); e.currentTarget.classList.toggle('on'); e.currentTarget.textContent = S.favs.includes(n) ? '★' : '☆'; } }, fav ? '★' : '☆')));
   });
