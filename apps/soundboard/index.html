@@ -16,6 +16,11 @@
   }
   .pad:hover { background: color-mix(in srgb, var(--c) 32%, var(--panel-2)); }
   .pad.playing { background: var(--c); color: #111; transform: scale(.97); }
+  .pad { transition: background-color .15s, transform .3s var(--spring), box-shadow .2s; }
+  .pad:active { transform: scale(.93); transition-duration: .06s; }
+  .pad::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: 0 0 0 0 var(--c); opacity: 0; }
+  .pad.playing::after { animation: boom .55s var(--out); }
+  @keyframes boom { from { opacity: .9; box-shadow: 0 0 0 0 var(--c); } to { opacity: 0; box-shadow: 0 0 0 18px var(--c); } }
   .pad.empty { background: transparent; border: 2px dashed var(--line); box-shadow: none; color: var(--mute); }
   .pad.sel { outline: 3px solid var(--ink); outline-offset: 2px; }
   .pad b { font-size: 15px; line-height: 1.15; }

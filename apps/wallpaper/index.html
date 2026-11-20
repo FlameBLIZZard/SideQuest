@@ -195,9 +195,15 @@ function paint(canvas, w, h) {
   }
 }
 const cv = $('#cv');
-function render() {
+function render(fancy) {
   const max = 1400, s = Math.min(1, max / Math.max(S.w, S.h));
-  paint(cv, Math.round(S.w * s), Math.round(S.h * s));
+  const w = Math.round(S.w * s), h = Math.round(S.h * s);
+  paint(cv, w, h);
+  // Tiny custom sizes still preview at a readable size.
+  const up = Math.max(1, 360 / Math.max(w, h));
+  cv.style.width = up > 1 ? w * up + 'px' : '';
+  cv.style.imageRendering = up > 1 ? 'pixelated' : '';
+  if (fancy) SQ.pop(cv);
   SQ.store.set('wallsmith', S);
 }
 
@@ -219,13 +225,13 @@ $('#detail').oninput = (e) => { S.detail = +e.target.value; $('#detailL').textCo
 $('#grain').oninput = (e) => { S.grain = +e.target.value; $('#grainL').textContent = S.grain; render(); };
 $('#seed').oninput = (e) => { S.seed = e.target.value; render(); };
 const words = ['moss', 'ember', 'tide', 'neon', 'dusk', 'orbit', 'velvet', 'static', 'bloom', 'drift', 'koi', 'aurora', 'quartz', 'fable'];
-$('#reseed').onclick = () => { S.seed = SQ.pick(words) + '-' + Math.floor(Math.random() * 1000); buildUi(); render(); };
+$('#reseed').onclick = () => { S.seed = SQ.pick(words) + '-' + Math.floor(Math.random() * 1000); buildUi(); render(true); };
 $('#randPal').onclick = () => {
   const h0 = Math.random() * 360, spread = 25 + Math.random() * 60, dark = Math.random() < .7;
   S.pal = [0, 1, 2, 3].map((i) => hsl((h0 + i * spread) % 360, 55 + Math.random() * 35, dark ? 12 + i * 20 : 85 - i * 18));
   buildUi(); render();
 };
-$('#shuffle').onclick = () => { S.style = SQ.pick(Object.keys(STYLES)); $('#randPal').onclick(); $('#reseed').onclick(); S.detail = 20 + Math.floor(Math.random() * 70); buildUi(); render(); };
+$('#shuffle').onclick = () => { S.style = SQ.pick(Object.keys(STYLES)); $('#randPal').onclick(); $('#reseed').onclick(); S.detail = 20 + Math.floor(Math.random() * 70); buildUi(); render(true); };
 function hsl(h, s, l) {
   s /= 100; l /= 100;
   const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l), f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
