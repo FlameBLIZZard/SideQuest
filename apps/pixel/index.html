@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixie · Sidequest</title>
+<link rel="stylesheet" href="../../shared/sq.css">
+<style>
+  :root { --accent: #ff5fa2; --accent-ink: #1a0610; }
+  .tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .tools button { padding: 8px 0; font-size: 12px; flex-direction: column; gap: 2px; }
+  .tools button kbd { font-size: 9px; }
+  .palette { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+  .swatch { aspect-ratio: 1; border-radius: 5px; border: 2px solid transparent; cursor: pointer; padding: 0; }
+  .swatch.sel { border-color: var(--ink); box-shadow: 0 0 0 2px var(--bg) inset; }
+  #board { max-width: calc(100% - 28px); max-height: calc(100% - 28px); image-rendering: pixelated; cursor: crosshair; touch-action: none; border-radius: 4px; box-shadow: 0 6px 30px #0006; }
+  .stage-wrap { display: grid; grid-template-rows: minmax(0,1fr) auto; min-height: calc(100vh - 85px); gap: 14px; }
+  .frames { display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 8px; align-items: center; }
+  .frame { flex: none; border: 2px solid var(--line); border-radius: 8px; padding: 3px; cursor: pointer; position: relative; background: var(--panel-2); }
+  .frame.sel { border-color: var(--accent); }
+  .frame canvas { display: block; width: 56px; height: 56px; image-rendering: pixelated; }
+  .frame span { position: absolute; top: 2px; left: 5px; font: 10px var(--mono); color: var(--mute); }
+  .preview { width: 100%; aspect-ratio: 1; image-rendering: pixelated; border-radius: 6px; }
+</style>
+</head>
+<body>
+<header class="sq-top">
+  <a class="home" href="../../index.html">← Sidequest</a>
+  <h1><span class="dot"></span>Pixie</h1>
+  <span class="mute">pixel art + sprite animation</span>
+  <div class="spacer"></div>
+  <div class="actions">
+    <button id="undo" title="Undo (Ctrl+Z)">Undo</button>
+    <button id="redo" title="Redo (Ctrl+Y)">Redo</button>
+    <button id="newBtn">New</button>
+    <button id="openBtn">Open</button>
+    <button id="saveBtn">Save .pixie</button>
+    <button id="exportPng">PNG</button>
+    <button id="exportSheet">Sprite sheet</button>
+    <button id="exportGif" class="primary">GIF</button>
+  </div>
+</header>
+<input type="file" id="fileIn" accept=".pixie,.json,image/png" hidden>
+
+<main class="sq-app">
+  <aside class="sq-side">
+    <section class="panel">
+      <h2>Tools</h2>
+      <div class="tools" id="tools"></div>
+      <div class="row" style="margin-top:10px">
+        <label class="check"><input type="checkbox" id="mirror"> Mirror</label>
+        <label class="check"><input type="checkbox" id="grid" checked> Grid</label>
+        <label class="check"><input type="checkbox" id="onion" checked> Onion</label>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Color</h2>
+      <div class="row" style="margin-bottom:10px">
+        <input type="color" id="picker" value="#ff5fa2">
+        <span class="mono" id="hex">#ff5fa2</span>
+        <div class="spacer" style="flex:1"></div>
+        <select id="palSel" title="Palette">
+          <option value="pico">PICO-8</option>
+          <option value="gb">Game Boy</option>
+          <option value="sweetie">Sweetie 16</option>
+          <option value="mono">Mono</option>
+        </select>
+      </div>
+      <div class="palette" id="palette"></div>
+    </section>
+    <section class="panel">
+      <h2>Preview</h2>
+      <canvas id="preview" class="preview checker"></canvas>
+      <label class="field" style="margin-top:10px"><span>Speed <b id="fpsLbl">8 fps</b></span>
+        <input type="range" id="fps" min="1" max="24" value="8"></label>
+    </section>
+  </aside>
+
+  <div class="stage-wrap">
+    <div class="sq-stage" id="stage"><canvas id="board"></canvas></div>
+    <section class="panel">
+      <div class="row" style="margin-bottom:8px">
+        <h2 style="margin:0">Frames</h2>
+        <div style="flex:1"></div>
+        <button id="addFrame">+ Frame</button>
+        <button id="dupFrame">Duplicate</button>
+        <button id="moveL" title="Move left">◀</button>
+        <button id="moveR" title="Move right">▶</button>
+        <button id="delFrame">Delete</button>
+        <select id="sizeSel" title="Canvas size">
+          <option>8</option><option>16</option><option selected>32</option><option>48</option><option>64</option>
+        </select>
+      </div>
+      <div class="frames" id="frames"></div>
+    </section>
+  </div>
+</main>
+
+<script src="../../shared/sq.js"></script>
+<script>
+const { $, el } = SQ;
+const PALETTES = {
+  pico: ['#000000','#1d2b53','#7e2553','#008751','#ab5236','#5f574f','#c2c3c7','#fff1e8','#ff004d','#ffa300','#ffec27','#00e436','#29adff','#83769c','#ff77a8','#ffccaa'],
+  gb: ['#0f380f','#306230','#8bac0f','#9bbc0f','#e0f8d0','#88c070','#346856','#081820'],
+  sweetie: ['#1a1c2c','#5d275d','#b13e53','#ef7d57','#ffcd75','#a7f070','#38b764','#257179','#29366f','#3b5dc9','#41a6f6','#73eff7','#f4f4f4','#94b0c2','#566c86','#333c57'],
+  mono: ['#000000','#222222','#444444','#666666','#888888','#aaaaaa','#cccccc','#ffffff'],
+};
+const TOOLS = [
+  { id: 'pen', label: 'Pen', key: 'B' }, { id: 'eraser', label: 'Erase', key: 'E' },
+  { id: 'fill', label: 'Fill', key: 'G' }, { id: 'pick', label: 'Pick', key: 'I' },
+  { id: 'line', label: 'Line', key: 'L' }, { id: 'rect', label: 'Rect', key: 'R' },
+  { id: 'circle', label: 'Circle', key: 'C' }, { id: 'shift', label: 'Move', key: 'M' },
+];
+
+let S = SQ.store.get('pixie', null) || { size: 32, frames: [blank(32)], cur: 0, fps: 8, color: '#ff5fa2', pal: 'pico' };
+let tool = 'pen';
+let undoStack = [], redoStack = [];
+const board = $('#board'), bctx = board.getContext('2d');
+let zoom = 16;
+
+function blank(n) { return new Array(n * n).fill(null); }
+function frame() { return S.frames[S.cur]; }
+function persist() { SQ.store.set('pixie', S); }
+function snapshot() { undoStack.push(JSON.stringify(S)); if (undoStack.length > 80) undoStack.shift(); redoStack = []; }
+function restore(json) { S = JSON.parse(json); sync(); }
+
+// ---------- rendering ----------
+function fit() {
+  const st = $('#stage').getBoundingClientRect();
+  zoom = Math.max(4, Math.floor(Math.min(st.width - 48, st.height - 48) / S.size));
+  board.width = board.height = S.size * zoom;
+  draw();
+}
+function paintFrame(ctx, f, z, alpha = 1) {
+  ctx.globalAlpha = alpha;
+  for (let i = 0; i < f.length; i++) if (f[i]) {
+    ctx.fillStyle = f[i];
+    ctx.fillRect((i % S.size) * z, Math.floor(i / S.size) * z, z, z);
+  }
+  ctx.globalAlpha = 1;
+}
+function draw(temp) {
+  const n = S.size, z = zoom;
+  bctx.clearRect(0, 0, board.width, board.height);
+  // checkerboard
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    bctx.fillStyle = (x + y) % 2 ? '#d9d9d9' : '#bdbdbd';
+    bctx.fillRect(x * z, y * z, z, z);
+  }
+  if ($('#onion').checked && S.cur > 0) paintFrame(bctx, S.frames[S.cur - 1], z, 0.25);
+  paintFrame(bctx, temp || frame(), z);
+  if ($('#grid').checked && z >= 6) {
+    bctx.strokeStyle = 'rgba(0,0,0,.12)'; bctx.lineWidth = 1; bctx.beginPath();
+    for (let i = 1; i < n; i++) { bctx.moveTo(i * z + .5, 0); bctx.lineTo(i * z + .5, n * z); bctx.moveTo(0, i * z + .5); bctx.lineTo(n * z, i * z + .5); }
+    bctx.stroke();
+  }
+  if ($('#mirror').checked) {
+    bctx.strokeStyle = 'rgba(255,95,162,.8)'; bctx.setLineDash([4, 4]); bctx.beginPath();
+    bctx.moveTo(n * z / 2, 0); bctx.lineTo(n * z / 2, n * z); bctx.stroke(); bctx.setLineDash([]);
+  }
+}
+function frameCanvas(f, scale = 1) {
+  const c = el('canvas', { width: S.size * scale, height: S.size * scale });
+  paintFrame(c.getContext('2d'), f, scale);
+  return c;
+}
+function renderFrames() {
+  const box = $('#frames'); box.innerHTML = '';
+  S.frames.forEach((f, i) => {
+    const c = frameCanvas(f, 1); c.className = 'checker';
+    box.append(el('div', { class: 'frame' + (i === S.cur ? ' sel' : ''), onclick: () => { S.cur = i; sync(); } }, c, el('span', {}, i + 1)));
+  });
+}
+function renderPalette() {
+  const box = $('#palette'); box.innerHTML = '';
+  PALETTES[S.pal].forEach((c) => box.append(el('button', {
+    class: 'swatch' + (c === S.color ? ' sel' : ''), style: { background: c }, title: c,
+    onclick: () => setColor(c),
+  })));
+}
+function renderTools() {
+  const box = $('#tools'); box.innerHTML = '';
+  TOOLS.forEach((t) => box.append(el('button', { class: tool === t.id ? 'on' : '', onclick: () => { tool = t.id; renderTools(); } }, t.label, el('kbd', {}, t.key))));
+}
+function setColor(c) { S.color = c; $('#picker').value = c; $('#hex').textContent = c; renderPalette(); persist(); }
+function sync() {
+  S.cur = Math.min(S.cur, S.frames.length - 1);
+  $('#sizeSel').value = S.size; $('#palSel').value = S.pal; $('#fps').value = S.fps; $('#fpsLbl').textContent = S.fps + ' fps';
+  setColor(S.color); fit(); renderFrames(); persist();
+}
+
+// ---------- drawing ----------
+function cellAt(e) {
+  const r = board.getBoundingClientRect();
+  const x = Math.floor((e.clientX - r.left) / r.width * S.size), y = Math.floor((e.clientY - r.top) / r.height * S.size);
+  return [x, y];
+}
+function setPx(f, x, y, c) {
+  const n = S.size;
+  if (x < 0 || y < 0 || x >= n || y >= n) return;
+  f[y * n + x] = c;
+  if ($('#mirror').checked) f[y * n + (n - 1 - x)] = c;
+}
+function lineCells(x0, y0, x1, y1) {
+  const out = []; const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  for (;;) { out.push([x0, y0]); if (x0 === x1 && y0 === y1) break; const e2 = 2 * err; if (e2 >= dy) { err += dy; x0 += sx; } if (e2 <= dx) { err += dx; y0 += sy; } }
+  return out;
+}
+function rectCells(x0, y0, x1, y1) {
+  const out = [], [a, b] = [Math.min(x0, x1), Math.max(x0, x1)], [c, d] = [Math.min(y0, y1), Math.max(y0, y1)];
+  for (let x = a; x <= b; x++) out.push([x, c], [x, d]);
+  for (let y = c; y <= d; y++) out.push([a, y], [b, y]);
+  return out;
+}
+function circleCells(x0, y0, x1, y1) {
+  const out = [], cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, rx = Math.abs(x1 - x0) / 2, ry = Math.abs(y1 - y0) / 2;
+  const steps = Math.max(16, Math.ceil((rx + ry) * 4));
+  for (let i = 0; i < steps; i++) { const t = i / steps * Math.PI * 2; out.push([Math.round(cx + Math.cos(t) * rx), Math.round(cy + Math.sin(t) * ry)]); }
+  return out;
+}
+function flood(f, x, y, c) {
+  const n = S.size, target = f[y * n + x];
+  if (target === c) return;
+  const stack = [[x, y]];
+  while (stack.length) {
+    const [px, py] = stack.pop();
+    if (px < 0 || py < 0 || px >= n || py >= n || f[py * n + px] !== target) continue;
+    f[py * n + px] = c;
+    stack.push([px + 1, py], [px - 1, py], [px, py + 1], [px, py - 1]);
+  }
+}
+
+let drag = null;
+board.addEventListener('pointerdown', (e) => {
+  board.setPointerCapture(e.pointerId);
+  const [x, y] = cellAt(e), f = frame();
+  const color = (tool === 'eraser' || e.button === 2) ? null : S.color;
+  if (tool === 'pick') { const c = f[y * S.size + x]; if (c) setColor(c); return; }
+  snapshot();
+  if (tool === 'fill') { flood(f, x, y, color); draw(); renderFrames(); persist(); return; }
+  drag = { x0: x, y0: y, lx: x, ly: y, color, base: f.slice() };
+  if (tool === 'pen' || tool === 'eraser' || e.button === 2) { setPx(f, x, y, color); draw(); }
+});
+board.addEventListener('pointermove', (e) => {
+  if (!drag) return;
+  const [x, y] = cellAt(e), f = frame();
+  if (tool === 'pen' || tool === 'eraser' || drag.color === null && !['line','rect','circle','shift'].includes(tool)) {
+    lineCells(drag.lx, drag.ly, x, y).forEach(([a, b]) => setPx(f, a, b, drag.color));
+    drag.lx = x; drag.ly = y; draw();
+  } else if (tool === 'shift') {
+    const dx = x - drag.x0, dy = y - drag.y0, n = S.size;
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+      const sx = (i - dx % n + n) % n, sy = (j - dy % n + n) % n;
+      f[j * n + i] = drag.base[sy * n + sx];
+    }
+    draw();
+  } else {
+    const temp = drag.base.slice();
+    const cells = tool === 'line' ? lineCells(drag.x0, drag.y0, x, y) : tool === 'rect' ? rectCells(drag.x0, drag.y0, x, y) : circleCells(drag.x0, drag.y0, x, y);
+    cells.forEach(([a, b]) => setPx(temp, a, b, drag.color));
+    drag.temp = temp; draw(temp);
+  }
+});
+const endDrag = () => {
+  if (!drag) return;
+  if (drag.temp) S.frames[S.cur] = drag.temp;
+  drag = null; draw(); renderFrames(); persist();
+};
+board.addEventListener('pointerup', endDrag);
+board.addEventListener('pointercancel', endDrag);
+board.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// ---------- preview loop ----------
+const pv = $('#preview'), pctx = pv.getContext('2d');
+let pvIndex = 0, pvLast = 0;
+function previewLoop(t) {
+  if (t - pvLast > 1000 / S.fps) {
+    pvLast = t; pvIndex = (pvIndex + 1) % S.frames.length;
+    const sc = Math.max(1, Math.floor(240 / S.size));
+    if (pv.width !== S.size * sc) pv.width = pv.height = S.size * sc;
+    pctx.clearRect(0, 0, pv.width, pv.height);
+    paintFrame(pctx, S.frames[pvIndex] || frame(), sc);
+  }
+  requestAnimationFrame(previewLoop);
+}
+requestAnimationFrame(previewLoop);
+
+// ---------- frames ----------
+$('#addFrame').onclick = () => { snapshot(); S.frames.splice(S.cur + 1, 0, blank(S.size)); S.cur++; sync(); };
+$('#dupFrame').onclick = () => { snapshot(); S.frames.splice(S.cur + 1, 0, frame().slice()); S.cur++; sync(); };
+$('#delFrame').onclick = () => { if (S.frames.length < 2) return SQ.toast('Need at least one frame'); snapshot(); S.frames.splice(S.cur, 1); sync(); };
+const move = (d) => { const j = S.cur + d; if (j < 0 || j >= S.frames.length) return; snapshot(); [S.frames[S.cur], S.frames[j]] = [S.frames[j], S.frames[S.cur]]; S.cur = j; sync(); };
+$('#moveL').onclick = () => move(-1);
+$('#moveR').onclick = () => move(1);
+
+$('#sizeSel').onchange = (e) => {
+  const n = +e.target.value, old = S.size; snapshot();
+  S.frames = S.frames.map((f) => { const g = blank(n); for (let y = 0; y < Math.min(n, old); y++) for (let x = 0; x < Math.min(n, old); x++) g[y * n + x] = f[y * old + x]; return g; });
+  S.size = n; sync();
+};
+$('#palSel').onchange = (e) => { S.pal = e.target.value; renderPalette(); persist(); };
+$('#picker').oninput = (e) => setColor(e.target.value);
+$('#fps').oninput = (e) => { S.fps = +e.target.value; $('#fpsLbl').textContent = S.fps + ' fps'; persist(); };
+['grid', 'onion', 'mirror'].forEach((id) => ($('#' + id).onchange = () => draw()));
+
+$('#undo').onclick = () => { if (!undoStack.length) return; redoStack.push(JSON.stringify(S)); restore(undoStack.pop()); };
+$('#redo').onclick = () => { if (!redoStack.length) return; undoStack.push(JSON.stringify(S)); restore(redoStack.pop()); };
+$('#newBtn').onclick = () => { if (!confirm('Start a new sprite? Unsaved work is lost.')) return; snapshot(); S.frames = [blank(S.size)]; S.cur = 0; sync(); };
+
+// ---------- files ----------
+$('#saveBtn').onclick = () => SQ.download(new Blob([JSON.stringify({ app: 'pixie', v: 1, ...S })], { type: 'application/json' }), `sprite-${SQ.stamp()}.pixie`);
+$('#openBtn').onclick = () => $('#fileIn').click();
+$('#fileIn').onchange = async (e) => {
+  const file = e.target.files[0]; if (!file) return; e.target.value = '';
+  snapshot();
+  if (file.type === 'image/png') return importPng(file);
+  try { const d = JSON.parse(await file.text()); S = { size: d.size, frames: d.frames, cur: 0, fps: d.fps || 8, color: d.color || S.color, pal: d.pal || 'pico' }; sync(); }
+  catch { SQ.toast('That file is not a Pixie project'); }
+};
+async function importPng(file) {
+  const img = await createImageBitmap(file);
+  const n = S.size, c = el('canvas', { width: n, height: n }), ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = false; ctx.drawImage(img, 0, 0, n, n);
+  const d = ctx.getImageData(0, 0, n, n).data, f = blank(n);
+  for (let i = 0; i < n * n; i++) if (d[i * 4 + 3] > 127) f[i] = '#' + [0, 1, 2].map((k) => d[i * 4 + k].toString(16).padStart(2, '0')).join('');
+  S.frames.splice(S.cur + 1, 0, f); S.cur++; sync(); SQ.toast('Image imported as a new frame');
+}
+const exportScale = () => Math.max(1, Math.floor(512 / S.size));
+$('#exportPng').onclick = async () => SQ.download(await SQ.canvasBlob(frameCanvas(frame(), exportScale())), `sprite-frame${S.cur + 1}.png`);
+$('#exportSheet').onclick = async () => {
+  const sc = exportScale(), n = S.size * sc, c = el('canvas', { width: n * S.frames.length, height: n }), ctx = c.getContext('2d');
+  S.frames.forEach((f, i) => ctx.drawImage(frameCanvas(f, sc), i * n, 0));
+  SQ.download(await SQ.canvasBlob(c), `spritesheet-${S.frames.length}x${S.size}px.png`);
+};
+$('#exportGif').onclick = () => {
+  const gif = encodeGif(S.frames, S.size, exportScale(), Math.round(100 / S.fps));
+  if (!gif) return SQ.toast('GIF supports up to 255 colors');
+  SQ.download(gif, `sprite-${SQ.stamp()}.gif`);
+};
+
+// ---------- GIF encoder (GIF89a, LZW, looping, 1-bit transparency) ----------
+function encodeGif(frames, size, scale, delay) {
+  const colors = [...new Set(frames.flat().filter(Boolean))];
+  if (colors.length > 255) return null;
+  const pal = [[0, 0, 0], ...colors.map((h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)))];
+  const index = new Map(colors.map((c, i) => [c, i + 1]));
+  let bits = 2; while ((1 << bits) < pal.length) bits++;
+  const W = size * scale, bytes = [];
+  const u16 = (v) => bytes.push(v & 255, v >> 8);
+  const str = (s) => [...s].forEach((ch) => bytes.push(ch.charCodeAt(0)));
+  str('GIF89a'); u16(W); u16(W); bytes.push(0xf0 | (bits - 1), 0, 0);
+  for (let i = 0; i < 1 << bits; i++) bytes.push(...(pal[i] || [0, 0, 0]));
+  bytes.push(0x21, 0xff, 0x0b); str('NETSCAPE2.0'); bytes.push(3, 1, 0, 0, 0);
+  for (const f of frames) {
+    bytes.push(0x21, 0xf9, 4, 0x09); u16(Math.max(2, delay)); bytes.push(0, 0);
+    bytes.push(0x2c); u16(0); u16(0); u16(W); u16(W); bytes.push(0);
+    const px = new Uint8Array(W * W);
+    for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
+      const c = f[Math.floor(y / scale) * size + Math.floor(x / scale)];
+      px[y * W + x] = c ? index.get(c) : 0;
+    }
+    bytes.push(bits);
+    const data = lzw(px, bits);
+    for (let i = 0; i < data.length; i += 255) { const chunk = data.slice(i, i + 255); bytes.push(chunk.length, ...chunk); }
+    bytes.push(0);
+  }
+  bytes.push(0x3b);
+  return new Blob([new Uint8Array(bytes)], { type: 'image/gif' });
+}
+function lzw(px, minSize) {
+  const out = [], clear = 1 << minSize, eoi = clear + 1;
+  let size = minSize + 1, next = eoi + 1, dict = new Map(), cur = 0, nb = 0;
+  const write = (code) => { cur |= code << nb; nb += size; while (nb >= 8) { out.push(cur & 255); cur >>>= 8; nb -= 8; } };
+  const emit = (code) => { write(code); if (next > (1 << size) - 1 && size < 12) size++; };
+  write(clear);
+  let prefix = px[0];
+  for (let i = 1; i < px.length; i++) {
+    const k = px[i], key = (prefix << 8) | k, v = dict.get(key);
+    if (v !== undefined) { prefix = v; continue; }
+    emit(prefix);
+    if (next < 4096) dict.set(key, next++);
+    else { write(clear); size = minSize + 1; next = eoi + 1; dict = new Map(); }
+    prefix = k;
+  }
+  emit(prefix); write(eoi);
+  if (nb > 0) out.push(cur & 255);
+  return out;
+}
+
+// ---------- keyboard ----------
+addEventListener('keydown', (e) => {
+  if (SQ.isTyping(e)) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); (e.shiftKey ? $('#redo') : $('#undo')).click(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); $('#redo').click(); return; }
+  const t = TOOLS.find((t) => t.key === e.key.toUpperCase());
+  if (t && !e.ctrlKey && !e.metaKey) { tool = t.id; renderTools(); }
+  if (e.key === ',' ) { S.cur = Math.max(0, S.cur - 1); sync(); }
+  if (e.key === '.') { S.cur = Math.min(S.frames.length - 1, S.cur + 1); sync(); }
+});
+addEventListener('resize', fit);
+renderTools(); renderPalette(); sync();
+</script>
+</body>
+</html>

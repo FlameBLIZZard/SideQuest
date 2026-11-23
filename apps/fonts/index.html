@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fontwall · Sidequest</title>
+<link rel="stylesheet" href="../../shared/sq.css">
+<style>
+  :root { --accent: #38bdf8; --accent-ink: #03141f; }
+  .bar { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 55px; z-index: 10; }
+  .bar .sample { font-size: 18px; padding: 10px 14px; width: 100%; }
+  .bar .ctl { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .bar .ctl label.field { min-width: 120px; }
+  .wall { padding: 16px; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(var(--min, 340px), 1fr)); }
+  .wall.list { grid-template-columns: 1fr; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px 14px; display: grid; gap: 8px; min-width: 0; }
+  .card.dark-bg { background: #111; color: #f3f3f3; }
+  .card header { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--mute); }
+  .card header b { color: var(--ink); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card header .sp { flex: 1; }
+  .card header button { padding: 2px 8px; font-size: 12px; }
+  .card .txt { overflow-wrap: anywhere; line-height: 1.2; outline: none; }
+  .star.on { color: #facc15; }
+  .empty { padding: 60px 20px; text-align: center; color: var(--mute); }
+  @media (max-width: 820px) { .bar { grid-template-columns: 1fr; top: 0; position: static; } }
+</style>
+</head>
+<body>
+<header class="sq-top">
+  <a class="home" href="../../index.html">← Sidequest</a>
+  <h1><span class="dot"></span>Fontwall</h1>
+  <span class="mute" id="count">every font on your PC, side by side</span>
+  <div class="spacer"></div>
+  <div class="actions">
+    <button id="loadLocal" class="primary">Load all my fonts</button>
+    <button id="addFont">Add font file</button>
+  </div>
+</header>
+<input type="file" id="fileIn" accept=".ttf,.otf,.woff,.woff2" multiple hidden>
+<div class="bar">
+  <input class="sample" id="sample" value="The quick brown fox jumps over the lazy dog">
+  <div class="ctl">
+    <label class="field"><span>Size <b id="sizeL"></b></span><input type="range" id="size" min="10" max="120"></label>
+    <select id="weight"><option value="300">Light</option><option value="400" selected>Regular</option><option value="700">Bold</option><option value="900">Black</option></select>
+    <label class="check"><input type="checkbox" id="italic"> Italic</label>
+    <label class="check"><input type="checkbox" id="dark"> Dark cards</label>
+  </div>
+  <div class="ctl">
+    <input type="search" id="filter" placeholder="Filter fonts…" style="width:200px">
+    <select id="show"><option value="all">All fonts</option><option value="fav">Favorites only</option><option value="serif">Looks serif</option><option value="mono">Monospace</option></select>
+    <button id="layout" data-smoke>List view</button>
+    <span class="mute" style="font-size:12px">Click a font name to copy its CSS.</span>
+  </div>
+</div>
+<main class="wall" id="wall"></main>
+
+<script src="../../shared/sq.js"></script>
+<script>
+const { $, el } = SQ;
+const S = Object.assign({ sample: 'The quick brown fox jumps over the lazy dog', size: 36, weight: '400', italic: false, dark: false, list: false, show: 'all', favs: [] }, SQ.store.get('fontwall', {}));
+// Fonts commonly found on Windows, macOS and Linux, plus popular installs. Checked one by one for presence.
+const COMMON = `Arial;Arial Black;Arial Narrow;Bahnschrift;Calibri;Cambria;Cambria Math;Candara;Cascadia Code;Cascadia Mono;Comic Sans MS;Consolas;Constantia;Corbel;Courier New;Ebrima;Franklin Gothic Medium;Gabriola;Gadugi;Georgia;HoloLens MDL2 Assets;Impact;Ink Free;Javanese Text;Leelawadee UI;Lucida Console;Lucida Sans Unicode;Malgun Gothic;Marlett;Microsoft Himalaya;Microsoft JhengHei;Microsoft New Tai Lue;Microsoft PhagsPa;Microsoft Sans Serif;Microsoft Tai Le;Microsoft YaHei;Microsoft Yi Baiti;MingLiU-ExtB;Mongolian Baiti;MS Gothic;MV Boli;Myanmar Text;Nirmala UI;Palatino Linotype;Segoe Fluent Icons;Segoe MDL2 Assets;Segoe Print;Segoe Script;Segoe UI;Segoe UI Black;Segoe UI Emoji;Segoe UI Historic;Segoe UI Light;Segoe UI Semibold;Segoe UI Symbol;Segoe UI Variable;SimSun;Sitka;Sylfaen;Symbol;Tahoma;Times New Roman;Trebuchet MS;Verdana;Webdings;Wingdings;Yu Gothic;
+Book Antiqua;Bookman Old Style;Century;Century Gothic;Garamond;Gill Sans MT;Goudy Old Style;Haettenschweiler;Lucida Bright;Lucida Calligraphy;Lucida Handwriting;Monotype Corsiva;Rockwell;Tw Cen MT;Bodoni MT;Brush Script MT;Copperplate Gothic;Edwardian Script ITC;Elephant;Forte;Harrington;Jokerman;Kristen ITC;Magneto;Old English Text MT;Papyrus;Playbill;Ravie;Showcard Gothic;Snap ITC;Stencil;Vladimir Script;Algerian;Bauhaus 93;Broadway;Chiller;Colonna MT;Curlz MT;
+American Typewriter;Andale Mono;Apple Chancery;Avenir;Avenir Next;Baskerville;Big Caslon;Bradley Hand;Chalkboard;Chalkduster;Cochin;Copperplate;Didot;Futura;Geneva;Gill Sans;Helvetica;Helvetica Neue;Herculanum;Hoefler Text;Lucida Grande;Marker Felt;Menlo;Monaco;Noteworthy;Optima;Palatino;Phosphate;Rockwell;SF Pro;SF Mono;Skia;Snell Roundhand;Trattatello;Zapfino;
+DejaVu Sans;DejaVu Serif;DejaVu Sans Mono;Liberation Sans;Liberation Serif;Liberation Mono;Ubuntu;Ubuntu Mono;Cantarell;Noto Sans;Noto Serif;Noto Sans Mono;
+Roboto;Roboto Mono;Roboto Slab;Open Sans;Lato;Montserrat;Poppins;Inter;Raleway;Oswald;Source Sans Pro;Source Code Pro;Fira Sans;Fira Code;JetBrains Mono;Merriweather;Playfair Display;Nunito;Rubik;Work Sans;Bebas Neue;Anton;Lobster;Pacifico;Dancing Script;Comfortaa;Quicksand;Josefin Sans;Space Grotesk;Space Mono;IBM Plex Sans;IBM Plex Mono;IBM Plex Serif;Manrope;DM Sans;DM Serif Display;Archivo;Barlow;Karla;Mulish;Outfit;Sora;Lexend;Press Start 2P;VT323;Permanent Marker;Caveat;Satisfy;Great Vibes;Amatic SC;Abril Fatface;Righteous;Bungee;Orbitron;Exo 2;Titillium Web;Cinzel;Cormorant Garamond;EB Garamond;Libre Baskerville;Crimson Text;Lora;PT Sans;PT Serif;PT Mono;Noto Color Emoji`.split(/;\s*/).filter(Boolean);
+let fonts = []; // { family, source }
+
+const probe = el('canvas').getContext('2d');
+function installed(name) {
+  const test = 'mmmmmmmmmmlli1WQ@#';
+  return ['monospace', 'serif', 'sans-serif'].some((base) => {
+    probe.font = `72px ${base}`; const w0 = probe.measureText(test).width;
+    probe.font = `72px "${name}", ${base}`; return probe.measureText(test).width !== w0;
+  });
+}
+function looks(name) {
+  probe.font = `40px "${name}"`;
+  const mono = Math.abs(probe.measureText('iiii').width - probe.measureText('MMMM').width) < 1;
+  return { mono };
+}
+function scanCommon() {
+  fonts = [...new Set(COMMON)].filter(installed).map((family) => ({ family, source: 'detected', ...looks(family) }));
+  render();
+  $('#count').textContent = `${fonts.length} fonts found. Click "Load all my fonts" to see every one.`;
+}
+$('#loadLocal').onclick = async () => {
+  if (!('queryLocalFonts' in window)) return SQ.toast('Your browser cannot list all fonts. Chrome or Edge can.');
+  try {
+    const list = await window.queryLocalFonts();
+    const fams = [...new Set(list.map((f) => f.family))].sort((a, b) => a.localeCompare(b));
+    const seen = new Set(fonts.map((f) => f.family));
+    fams.forEach((family) => { if (!seen.has(family)) fonts.push({ family, source: 'system', ...looks(family) }); });
+    fonts.sort((a, b) => a.family.localeCompare(b.family));
+    $('#count').textContent = `${fonts.length} fonts on this computer`; render();
+  } catch (e) { SQ.toast('Font access was denied'); }
+};
+$('#addFont').onclick = () => $('#fileIn').click();
+$('#fileIn').onchange = async (e) => {
+  for (const f of e.target.files) {
+    const family = f.name.replace(/\.[^.]+$/, '');
+    try { const face = new FontFace(family, await f.arrayBuffer()); await face.load(); document.fonts.add(face); fonts.unshift({ family, source: 'file', ...looks(family) }); }
+    catch { SQ.toast(`Could not read ${f.name}`); }
+  }
+  render();
+};
+
+function render() {
+  const wall = $('#wall'); wall.innerHTML = ''; wall.classList.toggle('list', S.list);
+  const q = $('#filter').value.toLowerCase();
+  const list = fonts.filter((f) => (!q || f.family.toLowerCase().includes(q)) && (S.show !== 'fav' || S.favs.includes(f.family)) && (S.show !== 'mono' || f.mono) && (S.show !== 'serif' || /serif|times|georgia|garamond|baskerville|book|palatino|cambria|constantia|didot|bodoni|merriweather|lora|playfair|caslon|cochin|hoefler/i.test(f.family) && !/sans/i.test(f.family)));
+  if (!list.length) { wall.append(el('div', { class: 'empty' }, fonts.length ? 'No fonts match.' : 'Scanning fonts…')); return; }
+  const frag = document.createDocumentFragment();
+  for (const f of list) {
+    const fav = S.favs.includes(f.family);
+    const txt = el('div', { class: 'txt', contenteditable: 'true', spellcheck: 'false', style: { fontFamily: `"${f.family}"`, fontSize: S.size + 'px', fontWeight: S.weight, fontStyle: S.italic ? 'italic' : 'normal' } }, S.sample);
+    txt.addEventListener('input', () => { $('#sample').value = txt.textContent; });
+    frag.append(el('article', { class: 'card' + (S.dark ? ' dark-bg' : '') },
+      el('header', {},
+        el('b', { title: 'Copy CSS', style: { cursor: 'copy' }, onclick: () => copy(`font-family: "${f.family}";`) }, f.family),
+        f.mono ? el('span', { class: 'mono' }, 'mono') : null, f.source === 'file' ? el('span', {}, 'file') : null,
+        el('span', { class: 'sp' }),
+        el('button', { class: 'ghost star' + (fav ? ' on' : ''), title: 'Favorite', onclick: () => { S.favs = fav ? S.favs.filter((x) => x !== f.family) : [...S.favs, f.family]; save(); render(); } }, fav ? '★' : '☆')),
+      txt));
+  }
+  wall.append(frag);
+}
+async function copy(t) { try { await navigator.clipboard.writeText(t); SQ.toast('Copied: ' + t); } catch { SQ.toast(t); } }
+function save() { S.sample = $('#sample').value; SQ.store.set('fontwall', S); }
+function applyText() { const t = $('#sample').value || ' '; SQ.$$('.card .txt').forEach((n) => { if (n !== document.activeElement) n.textContent = t; }); save(); }
+function applyStyle() { SQ.$$('.card .txt').forEach((n) => Object.assign(n.style, { fontSize: S.size + 'px', fontWeight: S.weight, fontStyle: S.italic ? 'italic' : 'normal' })); document.documentElement.style.setProperty('--min', Math.max(260, S.size * 9) + 'px'); save(); }
+
+$('#sample').value = S.sample; $('#sample').oninput = applyText;
+$('#size').value = S.size; $('#sizeL').textContent = S.size + 'px';
+$('#size').oninput = (e) => { S.size = +e.target.value; $('#sizeL').textContent = S.size + 'px'; applyStyle(); };
+$('#weight').value = S.weight; $('#weight').onchange = (e) => { S.weight = e.target.value; applyStyle(); };
+$('#italic').checked = S.italic; $('#italic').onchange = (e) => { S.italic = e.target.checked; applyStyle(); };
+$('#dark').checked = S.dark; $('#dark').onchange = (e) => { S.dark = e.target.checked; save(); render(); };
+$('#show').value = S.show; $('#show').onchange = (e) => { S.show = e.target.value; save(); render(); };
+$('#filter').oninput = render;
+const setLayoutLabel = () => ($('#layout').textContent = S.list ? 'Grid view' : 'List view');
+$('#layout').onclick = () => { S.list = !S.list; setLayoutLabel(); save(); render(); };
+setLayoutLabel(); applyStyle();
+setTimeout(scanCommon, 30);
+</script>
+</body>
+</html>
